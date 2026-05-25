@@ -73,7 +73,7 @@ function normalizePair(raw) {
 
 function coinSymbol(pair) {
   if (!pair) return "?";
-  return pair.replace(/USDT$/i, "").toUpperCase();
+  return pair.replace(/\..*$/, "").replace(/USDT$/i, "").toUpperCase();
 }
 
 const TF_RX = /^(\d+)(m|h|d|w|M)$/;
@@ -970,7 +970,7 @@ export default function App() {
                 <div key={pair} style={{ borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ padding: "9px 14px 5px", fontSize: 11, color: C.textBright, fontWeight: 700, letterSpacing: 2, background: "rgba(0,229,160,0.03)", display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.green, display: "inline-block" }} />
-                    {coinSymbol(pair)}
+                    <EditableText value={coinSymbol(pair)} onSave={(v) => { treeByCoin[pair].forEach(({ key }) => handleMetaEdit(key, "pair", v.toUpperCase() + "USDT")); }} style={{ color: C.textBright, fontSize: 11, fontWeight: 700, letterSpacing: 2 }} />
                     <span style={{ fontSize: 8, color: C.muted, marginLeft: "auto" }}>{treeByCoin[pair].length} TF</span>
                   </div>
                   {treeByCoin[pair].map(({ key, tf, startDate, endDate }) => {
