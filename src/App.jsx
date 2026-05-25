@@ -71,6 +71,11 @@ function normalizePair(raw) {
   return { pair: upper + "USDT", contractType: "P" };
 }
 
+function coinSymbol(pair) {
+  if (!pair) return "?";
+  return pair.replace(/USDT$/i, "").toUpperCase();
+}
+
 const TF_RX = /^(\d+)(m|h|d|w|M)$/;
 
 function parseFilename(name) {
@@ -214,6 +219,38 @@ function calcConflict(trades) {
 const wrColor  = (wr) => wr >= 55 ? C.green : wr >= 45 ? C.orange : C.red;
 const pnlColor = (v)  => v >= 0 ? C.green : C.red;
 const fmtBal   = (v)  => v >= 1000 ? `$${(v / 1000).toFixed(2)}K` : `$${v.toFixed(2)}`;
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  EDITABLE INLINE
+// ─────────────────────────────────────────────────────────────────────────────
+function EditableText({ value, onSave, style, inputStyle }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value);
+  const inputRef = useRef(null);
+
+  useEffect(() => { setDraft(value); }, [value]);
+  useEffect(() => { if (editing && inputRef.current) inputRef.current.focus(); }, [editing]);
+
+  if (!editing) {
+    return (
+      <span onClick={() => setEditing(true)} style={{ cursor: "pointer", borderBottom: "1px dashed rgba(255,255,255,0.15)", ...style }}>
+        {value || "—"}
+      </span>
+    );
+  }
+
+  const commit = () => {
+    setEditing(false);
+    if (draft.trim() && draft.trim() !== value) onSave(draft.trim());
+    else setDraft(value);
+  };
+
+  return (
+    <input ref={inputRef} value={draft} onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit} onKeyDown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape") { setDraft(value); setEditing(false); } }}
+      style={{ background: "rgba(0,229,160,0.08)", border: `1px solid rgba(0,229,160,0.3)`, borderRadius: 3, color: C.textBright, padding: "2px 6px", fontFamily: "monospace", outline: "none", width: "100%", ...inputStyle }} />
+  );
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  UI PRIMITIVES
@@ -742,6 +779,7 @@ export default function App() {
   const [toast,       setToast]       = useState(null);
   const [confirmDel,  setConfirmDel]  = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarSort, setSidebarSort] = useState("coin"); // "coin" | "timeframe"
   const fileRef = useRef();
 
   useEffect(() => {
@@ -794,15 +832,39 @@ export default function App() {
     }
   };
 
-  // Sidebar tree
-  const tree = {};
+  const handleMetaEdit = async (key, field, value) => {
+    const ds = datasets[key];
+    if (!ds) return;
+    const updated = { ...ds, meta: { ...ds.meta, [field]: value } };
+    try {
+      await dbSaveDataset(key, updated);
+      setDatasets((prev) => ({ ...prev, [key]: updated }));
+      showToast("Guncellendi", "ok");
+    } catch (err) {
+      showToast("Guncelleme hatasi: " + err.message, "err");
+    }
+  };
+
+  // Sidebar tree — coin grouping
+  const treeByCoin = {};
   Object.entries(datasets).forEach(([key, ds]) => {
     const p = ds.meta.pair;
-    if (!tree[p]) tree[p] = [];
-    tree[p].push({ key, tf: ds.meta.timeframe, startDate: ds.meta.startDate, endDate: ds.meta.endDate });
+    if (!treeByCoin[p]) treeByCoin[p] = [];
+    treeByCoin[p].push({ key, tf: ds.meta.timeframe, startDate: ds.meta.startDate, endDate: ds.meta.endDate });
   });
-  Object.values(tree).forEach((arr) => arr.sort((a, b) => tfSort(a.tf, b.tf)));
-  const sortedPairs = Object.keys(tree).sort();
+  Object.values(treeByCoin).forEach((arr) => arr.sort((a, b) => tfSort(a.tf, b.tf)));
+  const sortedPairs = Object.keys(treeByCoin).sort();
+
+  // Sidebar tree — timeframe grouping
+  const treeByTF = {};
+  Object.entries(datasets).forEach(([key, ds]) => {
+    const tf = ds.meta.timeframe;
+    if (!treeByTF[tf]) treeByTF[tf] = [];
+    treeByTF[tf].push({ key, pair: ds.meta.pair, startDate: ds.meta.startDate, endDate: ds.meta.endDate });
+  });
+  Object.values(treeByTF).forEach((arr) => arr.sort((a, b) => a.pair.localeCompare(b.pair)));
+  const sortedTFs = Object.keys(treeByTF).sort((a, b) => tfSort(a, b));
+
   const data = selectedKey ? datasets[selectedKey] : null;
 
   const tabContent = () => {
@@ -884,35 +946,90 @@ export default function App() {
 
         {/* SIDEBAR */}
         {sidebarOpen && (
-          <aside style={{ width: 210, borderRight: `1px solid ${C.border}`, background: "rgba(10,16,24,0.97)", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column" }}>
-            <div style={{ padding: "10px 14px", fontSize: 8, color: C.muted, textTransform: "uppercase", letterSpacing: 2.5, borderBottom: `1px solid ${C.border}`, background: "rgba(0,0,0,0.2)" }}>
-              Pariteler & Timeframe
+          <aside style={{ width: 240, borderRight: `1px solid ${C.border}`, background: "rgba(10,16,24,0.97)", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column" }}>
+            {/* Sort toggle */}
+            <div style={{ padding: "8px 10px", borderBottom: `1px solid ${C.border}`, background: "rgba(0,0,0,0.2)", display: "flex", gap: 4 }}>
+              {[{ id: "coin", label: "Coine Gore" }, { id: "timeframe", label: "TF'e Gore" }].map((s) => (
+                <button key={s.id} onClick={() => setSidebarSort(s.id)}
+                  style={{ flex: 1, padding: "4px 8px", borderRadius: 3, cursor: "pointer", fontSize: 9, fontFamily: "monospace", letterSpacing: 1, transition: "all .15s",
+                    background: sidebarSort === s.id ? "rgba(0,229,160,0.1)" : "transparent",
+                    border: `1px solid ${sidebarSort === s.id ? "rgba(0,229,160,0.3)" : "rgba(255,255,255,0.06)"}`,
+                    color: sidebarSort === s.id ? C.green : C.muted }}>
+                  {s.label}
+                </button>
+              ))}
             </div>
-            {sortedPairs.length === 0 ? (
+
+            {Object.keys(datasets).length === 0 ? (
               <div style={{ padding: "28px 16px", fontSize: 10, color: C.muted, lineHeight: 1.9, textAlign: "center" }}>
                 <div style={{ fontSize: 28, marginBottom: 10, opacity: 0.2 }}>◫</div>
                 Kayitli analiz yok.<br />CSV yukleyerek basla.
               </div>
-            ) : (
+            ) : sidebarSort === "coin" ? (
               sortedPairs.map((pair) => (
                 <div key={pair} style={{ borderBottom: `1px solid ${C.border}` }}>
-                  <div style={{ padding: "9px 14px 5px", fontSize: 10, color: C.textBright, fontWeight: 700, letterSpacing: 2, background: "rgba(0,229,160,0.03)", display: "flex", alignItems: "center", gap: 8 }}>
+                  <div style={{ padding: "9px 14px 5px", fontSize: 11, color: C.textBright, fontWeight: 700, letterSpacing: 2, background: "rgba(0,229,160,0.03)", display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.green, display: "inline-block" }} />
-                    {pair}
-                    <span style={{ fontSize: 8, color: C.muted, marginLeft: "auto" }}>{tree[pair].length} TF</span>
+                    {coinSymbol(pair)}
+                    <span style={{ fontSize: 8, color: C.muted, marginLeft: "auto" }}>{treeByCoin[pair].length} TF</span>
                   </div>
-                  {tree[pair].map(({ key, tf, startDate, endDate }) => {
+                  {treeByCoin[pair].map(({ key, tf, startDate, endDate }) => {
                     const isActive = key === selectedKey;
                     return (
                       <div key={key} style={{ display: "flex", alignItems: "stretch", borderLeft: `2px solid ${isActive ? C.green : "transparent"}`, background: isActive ? "rgba(0,229,160,0.07)" : "transparent", transition: "all .15s" }}>
-                        <div onClick={() => { setSelectedKey(key); setActiveTab("overview"); }} style={{ flex: 1, padding: "9px 14px 9px 18px", cursor: "pointer" }}>
-                          <div style={{ fontSize: 13, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace" }}>{tf}</div>
-                          <div style={{ fontSize: 9, color: C.muted, marginTop: 2 }}>
-                            {startDate ? `${startDate.slice(0,7)} › ${endDate?.slice(0,7)}` : "—"}
+                        <div onClick={() => { setSelectedKey(key); setActiveTab("overview"); }} style={{ flex: 1, padding: "8px 14px 8px 18px", cursor: "pointer" }}>
+                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace" }}>
+                            <EditableText value={tf} onSave={(v) => handleMetaEdit(key, "timeframe", v)} style={{ color: isActive ? C.green : C.text, fontSize: 12, fontWeight: isActive ? 700 : 400 }} />
+                          </div>
+                          <div style={{ fontSize: 12, color: C.textBright, marginTop: 4, fontFamily: "monospace", fontWeight: 600 }}>
+                            {startDate ? (
+                              <span>
+                                <EditableText value={startDate} onSave={(v) => handleMetaEdit(key, "startDate", v)} style={{ color: C.textBright, fontSize: 12 }} />
+                                <span style={{ color: C.muted, margin: "0 4px" }}>›</span>
+                                <EditableText value={endDate || ""} onSave={(v) => handleMetaEdit(key, "endDate", v)} style={{ color: C.textBright, fontSize: 12 }} />
+                              </span>
+                            ) : <span style={{ color: C.muted }}>—</span>}
                           </div>
                         </div>
                         <button onClick={(e) => { e.stopPropagation(); setConfirmDel(key); }}
-                          style={{ background: "transparent", border: "none", color: "rgba(255,71,87,0.3)", cursor: "pointer", padding: "0 12px", fontSize: 12, transition: "color .15s" }}
+                          style={{ background: "transparent", border: "none", color: "rgba(255,71,87,0.3)", cursor: "pointer", padding: "0 10px", fontSize: 12, transition: "color .15s" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.color = C.red)}
+                          onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,71,87,0.3)")}>
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))
+            ) : (
+              sortedTFs.map((tf) => (
+                <div key={tf} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ padding: "9px 14px 5px", fontSize: 11, color: C.textBright, fontWeight: 700, letterSpacing: 2, background: "rgba(77,166,255,0.03)", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.blue, display: "inline-block" }} />
+                    {tf}
+                    <span style={{ fontSize: 8, color: C.muted, marginLeft: "auto" }}>{treeByTF[tf].length} coin</span>
+                  </div>
+                  {treeByTF[tf].map(({ key, pair, startDate, endDate }) => {
+                    const isActive = key === selectedKey;
+                    return (
+                      <div key={key} style={{ display: "flex", alignItems: "stretch", borderLeft: `2px solid ${isActive ? C.green : "transparent"}`, background: isActive ? "rgba(0,229,160,0.07)" : "transparent", transition: "all .15s" }}>
+                        <div onClick={() => { setSelectedKey(key); setActiveTab("overview"); }} style={{ flex: 1, padding: "8px 14px 8px 18px", cursor: "pointer" }}>
+                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace" }}>
+                            <EditableText value={coinSymbol(pair)} onSave={(v) => handleMetaEdit(key, "pair", v.toUpperCase() + "USDT")} style={{ color: isActive ? C.green : C.text, fontSize: 12, fontWeight: isActive ? 700 : 400 }} />
+                          </div>
+                          <div style={{ fontSize: 12, color: C.textBright, marginTop: 4, fontFamily: "monospace", fontWeight: 600 }}>
+                            {startDate ? (
+                              <span>
+                                <EditableText value={startDate} onSave={(v) => handleMetaEdit(key, "startDate", v)} style={{ color: C.textBright, fontSize: 12 }} />
+                                <span style={{ color: C.muted, margin: "0 4px" }}>›</span>
+                                <EditableText value={endDate || ""} onSave={(v) => handleMetaEdit(key, "endDate", v)} style={{ color: C.textBright, fontSize: 12 }} />
+                              </span>
+                            ) : <span style={{ color: C.muted }}>—</span>}
+                          </div>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); setConfirmDel(key); }}
+                          style={{ background: "transparent", border: "none", color: "rgba(255,71,87,0.3)", cursor: "pointer", padding: "0 10px", fontSize: 12, transition: "color .15s" }}
                           onMouseEnter={(e) => (e.currentTarget.style.color = C.red)}
                           onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,71,87,0.3)")}>
                           ✕
@@ -953,12 +1070,22 @@ export default function App() {
           ) : (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", borderBottom: `1px solid ${C.border}`, background: "rgba(10,16,24,0.85)", flexShrink: 0, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 18, fontWeight: 700, color: C.textBright, letterSpacing: 3 }}>{data.meta.pair}</span>
+                <span style={{ fontSize: 18, fontWeight: 700, color: C.textBright, letterSpacing: 3 }}>
+                  <EditableText value={coinSymbol(data.meta.pair)} onSave={(v) => handleMetaEdit(selectedKey, "pair", v.toUpperCase() + "USDT")} style={{ color: C.textBright, fontSize: 18, fontWeight: 700, letterSpacing: 3 }} />
+                </span>
                 <span style={{ color: C.muted, fontSize: 16 }}>›</span>
-                <span style={{ color: C.green, border: `1px solid rgba(0,229,160,0.3)`, padding: "2px 12px", borderRadius: 2, fontSize: 12, fontFamily: "monospace" }}>{data.meta.timeframe}</span>
+                <span style={{ color: C.green, border: `1px solid rgba(0,229,160,0.3)`, padding: "2px 12px", borderRadius: 2, fontSize: 12, fontFamily: "monospace" }}>
+                  <EditableText value={data.meta.timeframe} onSave={(v) => handleMetaEdit(selectedKey, "timeframe", v)} style={{ color: C.green, fontSize: 12 }} />
+                </span>
                 {data.meta.contractType === "P" && <span style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Perpetual</span>}
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
-                  {data.meta.startDate && <span style={{ fontSize: 10, color: C.muted }}>{data.meta.startDate} — {data.meta.endDate}</span>}
+                  {data.meta.startDate && (
+                    <span style={{ fontSize: 13, color: C.textBright, fontFamily: "monospace", fontWeight: 600 }}>
+                      <EditableText value={data.meta.startDate} onSave={(v) => handleMetaEdit(selectedKey, "startDate", v)} style={{ color: C.textBright, fontSize: 13 }} />
+                      <span style={{ color: C.muted, margin: "0 6px" }}>—</span>
+                      <EditableText value={data.meta.endDate || ""} onSave={(v) => handleMetaEdit(selectedKey, "endDate", v)} style={{ color: C.textBright, fontSize: 13 }} />
+                    </span>
+                  )}
                   <span style={{ fontSize: 10, color: C.muted }}>{validTrades(data.trades).length} islem</span>
                   <button onClick={() => setConfirmDel(selectedKey)} style={{ background: "rgba(255,71,87,0.08)", border: `1px solid rgba(255,71,87,0.25)`, color: "#ff6b7a", padding: "4px 12px", borderRadius: 3, cursor: "pointer", fontSize: 10 }}>Sil</button>
                 </div>
