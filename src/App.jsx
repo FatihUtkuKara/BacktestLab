@@ -63,12 +63,29 @@ const TICKER_MAP = {
   pepe:"PEPEUSDT", wif:"WIFUSDT", bonk:"BONKUSDT",
 };
 
+const PAIR_PART_RX = /^[A-Z][A-Z0-9.]{2,}$/;
+
 function normalizePair(raw) {
+  const upper = raw.toUpperCase();
+  if (PAIR_PART_RX.test(upper)) return { pair: upper, contractType: "P" };
   const lower = raw.toLowerCase();
   if (TICKER_MAP[lower]) return { pair: TICKER_MAP[lower], contractType: "P" };
-  const upper = raw.toUpperCase();
   if (upper.endsWith("USDT")) return { pair: upper, contractType: "P" };
   return { pair: upper + "USDT", contractType: "P" };
+}
+
+function findPairPart(parts, startIdx, dateRx) {
+  for (let i = startIdx; i < parts.length; i++) {
+    const part = parts[i];
+    if (dateRx.test(part)) break;
+    if (PAIR_PART_RX.test(part)) return { rawPair: part, pairIdx: i };
+  }
+  return { rawPair: parts[startIdx] || "UNKNOWN", pairIdx: startIdx };
+}
+
+function normalizeTimeframe(tf) {
+  if (!tf || tf === "main") return tf || "main";
+  return tf === "1M" ? "1M" : tf.toLowerCase();
 }
 
 function coinSymbol(pair) {
@@ -76,7 +93,7 @@ function coinSymbol(pair) {
   return pair.replace(/\..*$/, "").replace(/USDT$/i, "").toUpperCase();
 }
 
-const TF_RX = /^(\d+)(m|h|d|w|M)$/;
+const TF_RX = /^(\d+)(m|h|d|w|M)$/i;
 
 function parseFilename(name) {
   const base   = name.replace(/\.(csv|CSV)$/, "");
@@ -87,8 +104,9 @@ function parseFilename(name) {
 
   const tradeIdx = parts.indexOf("trades");
   if (tradeIdx >= 0) {
-    const rawPair     = parts[tradeIdx + 1] || "UNKNOWN";
-    const rawContract = parts[tradeIdx + 2] || "";
+    const { rawPair, pairIdx } = findPairPart(parts, tradeIdx + 1, dateRx);
+    const nextPart = parts[pairIdx + 1] || "";
+    const rawContract = /^[A-Z]$/.test(nextPart) && !dateRx.test(nextPart) ? nextPart : "";
     const normalized  = normalizePair(rawPair);
     pair         = normalized.pair;
     contractType = rawContract.toUpperCase() || normalized.contractType;
@@ -97,10 +115,10 @@ function parseFilename(name) {
       startDate = parts[dateIdxs[0]];
       endDate   = parts[dateIdxs[1]];
       const after = dateIdxs[dateIdxs.length - 1] + 1;
-      if (after < parts.length) timeframe = parts[after];
+      if (after < parts.length) timeframe = normalizeTimeframe(parts[after]);
     }
   } else if (parts.length >= 2 && TF_RX.test(parts[parts.length - 1])) {
-    timeframe = parts[parts.length - 1];
+    timeframe = normalizeTimeframe(parts[parts.length - 1]);
     const normalized = normalizePair(parts.slice(0, parts.length - 1).join("_"));
     pair         = normalized.pair;
     contractType = normalized.contractType;
@@ -110,6 +128,7 @@ function parseFilename(name) {
     contractType = normalized.contractType;
   }
 
+  timeframe = normalizeTimeframe(timeframe);
   const storageKey = [pair, timeframe, startDate, endDate].filter(Boolean).join("__");
   return { pair, contractType, startDate, endDate, timeframe, storageKey };
 }
