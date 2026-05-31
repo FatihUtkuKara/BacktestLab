@@ -239,6 +239,118 @@ const wrColor  = (wr) => wr >= 55 ? C.green : wr >= 45 ? C.orange : C.red;
 const pnlColor = (v)  => v >= 0 ? C.green : C.red;
 const fmtBal   = (v)  => v >= 1000 ? `$${(v / 1000).toFixed(2)}K` : `$${v.toFixed(2)}`;
 
+function calcWinRates(trades) {
+  const valid  = validTrades(trades);
+  const longs  = valid.filter((t) => t.direction === "LONG");
+  const shorts = valid.filter((t) => t.direction === "SHORT");
+  const tpAll  = valid.filter((t) => t.result === "TP").length;
+  const tpL    = longs.filter((t) => t.result === "TP").length;
+  const tpS    = shorts.filter((t) => t.result === "TP").length;
+  return {
+    wrAll: valid.length  ? +((tpAll / valid.length) * 100).toFixed(1)  : null,
+    wrL:   longs.length  ? +((tpL   / longs.length)  * 100).toFixed(1)  : null,
+    wrS:   shorts.length ? +((tpS   / shorts.length) * 100).toFixed(1)  : null,
+    total: valid.length,
+    longCount: longs.length,
+    shortCount: shorts.length,
+  };
+}
+
+const RANK_SORTS = [
+  { id: "all",  label: "Genel Win Rate"  },
+  { id: "long", label: "Long Win Rate"   },
+  { id: "short", label: "Short Win Rate" },
+];
+
+function RankingModal({ datasets, onClose }) {
+  const [sortBy, setSortBy] = useState("all");
+
+  const rows = Object.entries(datasets).map(([key, ds]) => {
+    const rates = calcWinRates(ds.trades);
+    return {
+      key,
+      pair: coinSymbol(ds.meta.pair),
+      timeframe: ds.meta.timeframe,
+      startDate: ds.meta.startDate,
+      endDate: ds.meta.endDate,
+      ...rates,
+    };
+  });
+
+  const sortKey = sortBy === "long" ? "wrL" : sortBy === "short" ? "wrS" : "wrAll";
+  rows.sort((a, b) => {
+    const va = a[sortKey], vb = b[sortKey];
+    if (va == null && vb == null) return 0;
+    if (va == null) return 1;
+    if (vb == null) return -1;
+    return vb - va;
+  });
+
+  const fmtWR = (v) => v == null ? "—" : `${v}%`;
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 9997, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
+      onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ background: C.surface2, border: `1px solid ${C.border}`, borderRadius: 10, width: "100%", maxWidth: 820, maxHeight: "85vh", display: "flex", flexDirection: "column", fontFamily: "monospace", boxShadow: "0 24px 80px rgba(0,0,0,0.9)" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
+          <div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: C.textBright, letterSpacing: 2 }}>SIRALAMA</div>
+            <div style={{ fontSize: 9, color: C.muted, marginTop: 4, letterSpacing: 1 }}>{rows.length} analiz</div>
+          </div>
+          <button onClick={onClose} style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, width: 32, height: 32, borderRadius: 4, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>✕</button>
+        </div>
+
+        <div style={{ display: "flex", gap: 6, padding: "12px 20px", borderBottom: `1px solid ${C.border}`, flexWrap: "wrap" }}>
+          {RANK_SORTS.map((s) => (
+            <button key={s.id} onClick={() => setSortBy(s.id)}
+              style={{ padding: "6px 14px", borderRadius: 3, cursor: "pointer", fontSize: 10, letterSpacing: 0.5, transition: "all .15s",
+                background: sortBy === s.id ? "rgba(0,229,160,0.12)" : "transparent",
+                border: `1px solid ${sortBy === s.id ? "rgba(0,229,160,0.35)" : "rgba(255,255,255,0.08)"}`,
+                color: sortBy === s.id ? C.green : C.muted }}>
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 20px" }}>
+          {rows.length === 0 ? (
+            <div style={{ padding: 40, textAlign: "center", color: C.muted, fontSize: 12 }}>Henuz analiz yok.</div>
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 12 }}>
+              <thead>
+                <tr>
+                  {["#", "Parite", "TF", "Tarih", "Genel WR", "Long WR", "Short WR", "Islem"].map((h) => (
+                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: C.muted, fontSize: 9, textTransform: "uppercase", letterSpacing: 1, borderBottom: `1px solid ${C.border}`, background: "rgba(0,0,0,0.25)", position: "sticky", top: 0 }}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.key} style={{ background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent" }}>
+                    <td style={{ padding: "10px", color: C.muted, fontSize: 10 }}>{i + 1}</td>
+                    <td style={{ padding: "10px", color: C.textBright, fontWeight: 700 }}>{r.pair}</td>
+                    <td style={{ padding: "10px", color: C.text }}>{r.timeframe}</td>
+                    <td style={{ padding: "10px", color: C.muted, fontSize: 10, whiteSpace: "nowrap" }}>
+                      {r.startDate ? `${r.startDate.slice(0, 7)} › ${r.endDate?.slice(0, 7) || "—"}` : "—"}
+                    </td>
+                    <td style={{ padding: "10px", color: wrColor(r.wrAll ?? 0), fontWeight: sortBy === "all" ? 700 : 400 }}>{fmtWR(r.wrAll)}</td>
+                    <td style={{ padding: "10px", color: wrColor(r.wrL ?? 0), fontWeight: sortBy === "long" ? 700 : 400 }}>{fmtWR(r.wrL)}</td>
+                    <td style={{ padding: "10px", color: wrColor(r.wrS ?? 0), fontWeight: sortBy === "short" ? 700 : 400 }}>{fmtWR(r.wrS)}</td>
+                    <td style={{ padding: "10px", color: C.muted, fontSize: 10 }}>{r.total}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  EDITABLE INLINE
 // ─────────────────────────────────────────────────────────────────────────────
@@ -794,11 +906,13 @@ export default function App() {
   const [activeTab,   setActiveTab]   = useState("overview");
   const [loading,     setLoading]     = useState(true);
   const [saving,      setSaving]      = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(null);
   const [dragOver,    setDragOver]    = useState(false);
   const [toast,       setToast]       = useState(null);
   const [confirmDel,  setConfirmDel]  = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sidebarSort, setSidebarSort] = useState("coin"); // "coin" | "timeframe"
+  const [rankingOpen, setRankingOpen] = useState(false);
   const fileRef = useRef();
 
   useEffect(() => {
@@ -812,27 +926,70 @@ export default function App() {
     setTimeout(() => setToast(null), 4000);
   };
 
-  const handleFile = useCallback(async (file) => {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = async (e) => {
+  const readFileAsText = (file) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = () => reject(new Error(`Dosya okunamadi: ${file.name}`));
+      reader.readAsText(file, "utf-8");
+    });
+
+  const handleFiles = useCallback(async (fileList) => {
+    if (!fileList?.length) return;
+    const files = Array.from(fileList).filter((f) => f.name.toLowerCase().endsWith(".csv"));
+    if (!files.length) {
+      showToast("CSV dosyasi bulunamadi.", "err");
+      return;
+    }
+
+    setSaving(true);
+    setUploadProgress({ current: 0, total: files.length });
+
+    let lastKey = null;
+    let lastDataset = null;
+    let ok = 0;
+    let fail = 0;
+    const errors = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      setUploadProgress({ current: i + 1, total: files.length });
       try {
-        setSaving(true);
-        const dataset = parseCSV(e.target.result, file.name);
+        const text = await readFileAsText(file);
+        const dataset = parseCSV(text, file.name);
         const key = dataset.meta.storageKey;
         await dbSaveDataset(key, dataset);
         setDatasets((prev) => ({ ...prev, [key]: dataset }));
-        setSelectedKey(key);
-        setActiveTab("overview");
-        showToast(`Kaydedildi → ${dataset.meta.pair} / ${dataset.meta.timeframe}`, "ok");
+        lastKey = key;
+        lastDataset = dataset;
+        ok++;
       } catch (err) {
-        showToast("Hata: " + err.message, "err");
-      } finally {
-        setSaving(false);
-        if (fileRef.current) fileRef.current.value = "";
+        fail++;
+        errors.push(`${file.name}: ${err.message}`);
       }
-    };
-    reader.readAsText(file, "utf-8");
+    }
+
+    if (lastKey) {
+      setSelectedKey(lastKey);
+      setActiveTab("overview");
+    }
+
+    if (fail === 0) {
+      showToast(
+        ok === 1
+          ? `Kaydedildi → ${lastDataset.meta.pair} / ${lastDataset.meta.timeframe}`
+          : `${ok} dosya kaydedildi.`,
+        "ok"
+      );
+    } else if (ok === 0) {
+      showToast(errors[0] || "Yukleme basarisiz.", "err");
+    } else {
+      showToast(`${ok} kaydedildi, ${fail} hata.`, "err");
+    }
+
+    setSaving(false);
+    setUploadProgress(null);
+    if (fileRef.current) fileRef.current.value = "";
   }, []);
 
   const handleDelete = async (key) => {
@@ -937,6 +1094,10 @@ export default function App() {
         </div>
       )}
 
+      {rankingOpen && (
+        <RankingModal datasets={datasets} onClose={() => setRankingOpen(false)} />
+      )}
+
       {/* HEADER */}
       <header style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 16px", height: 54, background: "rgba(7,12,17,0.98)", borderBottom: `1px solid ${C.border}`, position: "relative", zIndex: 10, flexShrink: 0 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -953,11 +1114,18 @@ export default function App() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          {saving && <span style={{ fontSize: 10, color: C.green }}>Kaydediliyor...</span>}
+          <button onClick={() => setRankingOpen(true)} style={{ background: "rgba(77,166,255,0.08)", border: `1px solid rgba(77,166,255,0.3)`, color: C.blue, padding: "7px 18px", borderRadius: 3, cursor: "pointer", fontSize: 11 }}>
+            Siralama
+          </button>
+          {saving && (
+            <span style={{ fontSize: 10, color: C.green }}>
+              {uploadProgress ? `Kaydediliyor ${uploadProgress.current}/${uploadProgress.total}...` : "Kaydediliyor..."}
+            </span>
+          )}
           <button onClick={() => fileRef.current.click()} style={{ background: "rgba(0,229,160,0.1)", border: `1px solid rgba(0,229,160,0.35)`, color: C.green, padding: "7px 18px", borderRadius: 3, cursor: "pointer", fontSize: 11 }}>
             + CSV
           </button>
-          <input ref={fileRef} type="file" accept=".csv" style={{ display: "none" }} onChange={(e) => handleFile(e.target.files[0])} />
+          <input ref={fileRef} type="file" accept=".csv" multiple style={{ display: "none" }} onChange={(e) => handleFiles(e.target.files)} />
         </div>
       </header>
 
@@ -1062,11 +1230,11 @@ export default function App() {
             <div
               onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
               onDragLeave={() => setDragOver(false)}
-              onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files[0]); }}
+              onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFiles(e.dataTransfer.files); }}
               onClick={() => fileRef.current.click()}
               style={{ margin: 12, marginTop: "auto", border: `1px dashed ${dragOver ? C.green : "rgba(255,255,255,0.1)"}`, borderRadius: 6, padding: "14px 10px", textAlign: "center", cursor: "pointer", transition: "all .2s" }}>
               <div style={{ fontSize: 18, color: dragOver ? C.green : "rgba(255,255,255,0.15)", marginBottom: 4 }}>+</div>
-              <div style={{ fontSize: 9, color: C.muted }}>CSV surukle / yukle</div>
+              <div style={{ fontSize: 9, color: C.muted }}>CSV surukle / toplu yukle</div>
             </div>
           </aside>
         )}
