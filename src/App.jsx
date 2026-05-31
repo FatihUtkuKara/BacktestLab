@@ -256,6 +256,12 @@ function calcWinRates(trades) {
   };
 }
 
+const RANK_WR_COLS = [
+  { id: "all",   key: "wrAll", label: "Genel WR"  },
+  { id: "long",  key: "wrL",   label: "Long WR"   },
+  { id: "short", key: "wrS",   label: "Short WR"  },
+];
+
 const RANK_SORTS = [
   { id: "all",  label: "Genel Win Rate"  },
   { id: "long", label: "Long Win Rate"   },
@@ -292,6 +298,14 @@ function RankingModal({ datasets, onClose }) {
   });
 
   const fmtWR = (v) => v == null ? "—" : `${v}%`;
+
+  const wrColOrder = [
+    RANK_WR_COLS.find((c) => c.id === sortBy),
+    ...RANK_WR_COLS.filter((c) => c.id !== sortBy),
+  ];
+
+  const thStyle = { padding: "8px 10px", textAlign: "left", color: C.muted, fontSize: 9, textTransform: "uppercase", letterSpacing: 1, borderBottom: `1px solid ${C.border}`, background: "rgba(0,0,0,0.25)", position: "sticky", top: 0 };
+  const tdStyle = { padding: "10px" };
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 9997, background: "rgba(0,0,0,0.85)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}
@@ -337,26 +351,26 @@ function RankingModal({ datasets, onClose }) {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 12 }}>
               <thead>
                 <tr>
-                  {["#", "Parite", "TF", "Tarih", "Genel WR", "Long WR", "Short WR", "Islem"].map((h) => (
-                    <th key={h} style={{ padding: "8px 10px", textAlign: "left", color: C.muted, fontSize: 9, textTransform: "uppercase", letterSpacing: 1, borderBottom: `1px solid ${C.border}`, background: "rgba(0,0,0,0.25)", position: "sticky", top: 0 }}>
-                      {h}
-                    </th>
+                  {["#", "Parite", "TF", "Tarih", ...wrColOrder.map((c) => c.label), "Islem"].map((h) => (
+                    <th key={h} style={thStyle}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {rows.map((r, i) => (
                   <tr key={r.key} style={{ background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent" }}>
-                    <td style={{ padding: "10px", color: C.muted, fontSize: 10 }}>{i + 1}</td>
-                    <td style={{ padding: "10px", color: C.textBright, fontWeight: 700 }}>{r.pair}</td>
-                    <td style={{ padding: "10px", color: C.text }}>{r.timeframe}</td>
-                    <td style={{ padding: "10px", color: C.muted, fontSize: 10, whiteSpace: "nowrap" }}>
+                    <td style={{ ...tdStyle, color: C.muted, fontSize: 10 }}>{i + 1}</td>
+                    <td style={{ ...tdStyle, color: C.textBright, fontWeight: 700 }}>{r.pair}</td>
+                    <td style={{ ...tdStyle, color: C.text }}>{r.timeframe}</td>
+                    <td style={{ ...tdStyle, color: C.muted, fontSize: 10, whiteSpace: "nowrap" }}>
                       {r.startDate ? `${r.startDate.slice(0, 7)} › ${r.endDate?.slice(0, 7) || "—"}` : "—"}
                     </td>
-                    <td style={{ padding: "10px", color: wrColor(r.wrAll ?? 0), fontWeight: sortBy === "all" ? 700 : 400 }}>{fmtWR(r.wrAll)}</td>
-                    <td style={{ padding: "10px", color: wrColor(r.wrL ?? 0), fontWeight: sortBy === "long" ? 700 : 400 }}>{fmtWR(r.wrL)}</td>
-                    <td style={{ padding: "10px", color: wrColor(r.wrS ?? 0), fontWeight: sortBy === "short" ? 700 : 400 }}>{fmtWR(r.wrS)}</td>
-                    <td style={{ padding: "10px", color: C.muted, fontSize: 10 }}>{r.total}</td>
+                    {wrColOrder.map((col) => (
+                      <td key={col.id} style={{ ...tdStyle, color: wrColor(r[col.key] ?? 0), fontWeight: sortBy === col.id ? 700 : 400 }}>
+                        {fmtWR(r[col.key])}
+                      </td>
+                    ))}
+                    <td style={{ ...tdStyle, color: C.muted, fontSize: 10 }}>{r.total}</td>
                   </tr>
                 ))}
               </tbody>
