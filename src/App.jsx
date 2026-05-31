@@ -264,18 +264,23 @@ const RANK_SORTS = [
 
 function RankingModal({ datasets, onClose }) {
   const [sortBy, setSortBy] = useState("all");
+  const [minTradesInput, setMinTradesInput] = useState("");
 
-  const rows = Object.entries(datasets).map(([key, ds]) => {
-    const rates = calcWinRates(ds.trades);
-    return {
-      key,
-      pair: coinSymbol(ds.meta.pair),
-      timeframe: ds.meta.timeframe,
-      startDate: ds.meta.startDate,
-      endDate: ds.meta.endDate,
-      ...rates,
-    };
-  });
+  const minTrades = Math.max(0, parseInt(minTradesInput, 10) || 0);
+
+  const rows = Object.entries(datasets)
+    .map(([key, ds]) => {
+      const rates = calcWinRates(ds.trades);
+      return {
+        key,
+        pair: coinSymbol(ds.meta.pair),
+        timeframe: ds.meta.timeframe,
+        startDate: ds.meta.startDate,
+        endDate: ds.meta.endDate,
+        ...rates,
+      };
+    })
+    .filter((r) => r.total >= minTrades);
 
   const sortKey = sortBy === "long" ? "wrL" : sortBy === "short" ? "wrS" : "wrAll";
   rows.sort((a, b) => {
@@ -301,7 +306,7 @@ function RankingModal({ datasets, onClose }) {
           <button onClick={onClose} style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, width: 32, height: 32, borderRadius: 4, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>✕</button>
         </div>
 
-        <div style={{ display: "flex", gap: 6, padding: "12px 20px", borderBottom: `1px solid ${C.border}`, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: 6, padding: "12px 20px", borderBottom: `1px solid ${C.border}`, flexWrap: "wrap", alignItems: "center" }}>
           {RANK_SORTS.map((s) => (
             <button key={s.id} onClick={() => setSortBy(s.id)}
               style={{ padding: "6px 14px", borderRadius: 3, cursor: "pointer", fontSize: 10, letterSpacing: 0.5, transition: "all .15s",
@@ -311,11 +316,23 @@ function RankingModal({ datasets, onClose }) {
               {s.label}
             </button>
           ))}
+          <div style={{ width: 1, height: 24, background: C.border, margin: "0 4px" }} />
+          <span style={{ fontSize: 10, color: C.muted, letterSpacing: 0.5 }}>Minimum Islem Sayisi</span>
+          <input
+            type="number"
+            min={0}
+            value={minTradesInput}
+            onChange={(e) => setMinTradesInput(e.target.value)}
+            placeholder="0"
+            style={{ width: 72, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, color: C.textBright, padding: "6px 10px", fontSize: 11, fontFamily: "monospace", outline: "none" }}
+          />
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 20px" }}>
           {rows.length === 0 ? (
-            <div style={{ padding: 40, textAlign: "center", color: C.muted, fontSize: 12 }}>Henuz analiz yok.</div>
+            <div style={{ padding: 40, textAlign: "center", color: C.muted, fontSize: 12 }}>
+              {Object.keys(datasets).length === 0 ? "Henuz analiz yok." : "Bu filtreye uyan analiz yok."}
+            </div>
           ) : (
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 12 }}>
               <thead>
