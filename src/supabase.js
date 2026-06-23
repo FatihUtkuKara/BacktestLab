@@ -33,6 +33,7 @@ export async function dbLoadAll() {
       },
       trades:     row.trades,
       filename:   row.filename,
+      rawCsv:     row.csv_content || "",
       uploadedAt: row.uploaded_at,
     };
   });
@@ -50,6 +51,7 @@ export async function dbSaveDataset(storageKey, dataset) {
       exchange:      dataset.meta.exchange   || "UNKNOWN",
       contract_type: dataset.meta.contractType || "P",
       filename:      dataset.filename,
+      csv_content:   dataset.rawCsv || null,
       trades:        dataset.trades,
       uploaded_at:   dataset.uploadedAt,
     },

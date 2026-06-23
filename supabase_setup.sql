@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS public.datasets (
   exchange      TEXT DEFAULT 'UNKNOWN',
   contract_type TEXT DEFAULT 'P',
   filename      TEXT,
+  csv_content   TEXT,
   trades        JSONB NOT NULL DEFAULT '[]'::jsonb,
   uploaded_at   TIMESTAMPTZ DEFAULT NOW()
 );

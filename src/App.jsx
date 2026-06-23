@@ -197,6 +197,59 @@ function tradeSlPct(t) {
   return (Math.abs(t.slPrice - t.entryPrice) / t.entryPrice) * 100;
 }
 
+const CSV_EXPORT_HEADERS = [
+  "entry_time", "direction", "entry_price", "tp_price", "sl_price", "entry_sl_pct",
+  "result", "exit_time", "conflict_type", "month", "month_win_rate", "overall_win_rate_pct",
+];
+
+function csvCell(val) {
+  const s = val == null ? "" : String(val);
+  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function tradesToCSV(trades) {
+  const rows = [CSV_EXPORT_HEADERS.join(",")];
+  (trades || []).forEach((t) => {
+    const slPct = tradeSlPct(t);
+    rows.push([
+      t.entryTime,
+      t.direction,
+      t.entryPrice || "",
+      t.tpPrice || "",
+      t.slPrice || "",
+      slPct ? +slPct.toFixed(4) : "",
+      t.result,
+      t.exitTime,
+      t.conflictType || "none",
+      t.month,
+      t.monthWR,
+      t.overallWR,
+    ].map(csvCell).join(","));
+  });
+  return rows.join("\n");
+}
+
+function buildExportFilename(dataset) {
+  if (dataset.filename) return dataset.filename;
+  const { pair, timeframe, startDate, endDate } = dataset.meta || {};
+  const parts = ["trades", pair, startDate, endDate, timeframe].filter(Boolean);
+  return `${parts.join("_")}.csv`;
+}
+
+function downloadDatasetCSV(dataset) {
+  const csv = dataset.rawCsv?.trim() ? dataset.rawCsv : tradesToCSV(dataset.trades);
+  const filename = buildExportFilename(dataset);
+  const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 function getSlFilterInfo(trades) {
   const pcts = validTrades(trades)
     .filter((t) => t.result === "TP" || t.result === "SL")
@@ -605,6 +658,7 @@ function OverviewTab({ data }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(155px,1fr))", gap: 10 }}>
         {[
           ["Parite",    meta.pair],
+          ["Dosya",     data.filename || "—"],
           ["Borsa",     meta.exchange || "UNKNOWN"],
           ["Kontrat",   meta.contractType === "P" ? "Perpetual" : (meta.contractType || "Spot")],
           ["Timeframe", meta.timeframe],
@@ -1136,7 +1190,7 @@ export default function App() {
         const text = await readFileAsText(file);
         const inferredExchange = inferExchangeFromFilename(file.name);
         const exchange = inferredExchange || askExchangeForFile(file.name);
-        const dataset = parseCSV(text, file.name, exchange);
+        const dataset = { ...parseCSV(text, file.name, exchange), rawCsv: text };
         const key = dataset.meta.storageKey;
         await dbSaveDataset(key, dataset);
         setDatasets((prev) => ({ ...prev, [key]: dataset }));
@@ -1565,6 +1619,7 @@ export default function App() {
                     </span>
                   )}
                   <span style={{ fontSize: 10, color: C.muted }}>{validTrades(data.trades).length} islem</span>
+                  <button onClick={() => downloadDatasetCSV(data)} style={{ background: "rgba(77,166,255,0.08)", border: `1px solid rgba(77,166,255,0.25)`, color: C.blue, padding: "4px 12px", borderRadius: 3, cursor: "pointer", fontSize: 10 }}>Indir CSV</button>
                   <button onClick={() => setConfirmDel(selectedKey)} style={{ background: "rgba(255,71,87,0.08)", border: `1px solid rgba(255,71,87,0.25)`, color: "#ff6b7a", padding: "4px 12px", borderRadius: 3, cursor: "pointer", fontSize: 10 }}>Sil</button>
                 </div>
               </div>
