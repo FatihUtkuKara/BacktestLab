@@ -270,6 +270,33 @@ function calcWinRates(trades) {
   };
 }
 
+function parseTradeDate(value) {
+  if (!value) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+  const normalized = raw.includes("T") ? raw : raw.replace(" ", "T");
+  const ms = Date.parse(normalized);
+  if (Number.isNaN(ms)) return null;
+  return new Date(ms);
+}
+
+function getTradeDateRange(trades) {
+  let first = null;
+  let last = null;
+  (trades || []).forEach((t) => {
+    [t.entryTime, t.exitTime].forEach((val) => {
+      const d = parseTradeDate(val);
+      if (!d) return;
+      if (!first || d < first) first = d;
+      if (!last || d > last) last = d;
+    });
+  });
+  return {
+    start: first ? first.toISOString().slice(0, 10) : "",
+    end: last ? last.toISOString().slice(0, 10) : "",
+  };
+}
+
 const RANK_WR_COLS = [
   { id: "all",   key: "wrAll", label: "Genel WR"  },
   { id: "long",  key: "wrL",   label: "Long WR"   },
@@ -288,11 +315,15 @@ function RankingModal({
   onSortByChange,
   minTradesInput,
   onMinTradesInputChange,
+  exchangeFilter,
+  onExchangeFilterChange,
   onSelectDataset,
   onClose,
 }) {
 
   const minTrades = Math.max(0, parseInt(minTradesInput, 10) || 0);
+  const exchangeOptions = ["ALL", ...Array.from(new Set(Object.values(datasets).map((d) => d.meta.exchange || "UNKNOWN"))).sort()];
+  const selectedExchange = exchangeFilter || "ALL";
 
   const rows = Object.entries(datasets)
     .map(([key, ds]) => {
@@ -300,13 +331,15 @@ function RankingModal({
       return {
         key,
         pair: coinSymbol(ds.meta.pair),
+        exchange: ds.meta.exchange || "UNKNOWN",
         timeframe: ds.meta.timeframe,
         startDate: ds.meta.startDate,
         endDate: ds.meta.endDate,
         ...rates,
       };
     })
-    .filter((r) => r.total >= minTrades);
+    .filter((r) => r.total >= minTrades)
+    .filter((r) => selectedExchange === "ALL" || r.exchange === selectedExchange);
 
   const sortKey = sortBy === "long" ? "wrL" : sortBy === "short" ? "wrS" : "wrAll";
   rows.sort((a, b) => {
@@ -360,6 +393,16 @@ function RankingModal({
             placeholder="0"
             style={{ width: 72, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, color: C.textBright, padding: "6px 10px", fontSize: 11, fontFamily: "monospace", outline: "none" }}
           />
+          <span style={{ fontSize: 10, color: C.muted, letterSpacing: 0.5, marginLeft: 8 }}>Borsa</span>
+          <select
+            value={selectedExchange}
+            onChange={(e) => onExchangeFilterChange(e.target.value)}
+            style={{ minWidth: 120, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, color: C.textBright, padding: "6px 10px", fontSize: 11, fontFamily: "monospace", outline: "none" }}
+          >
+            {exchangeOptions.map((ex) => (
+              <option key={ex} value={ex}>{ex === "ALL" ? "Tum Borsalar" : ex}</option>
+            ))}
+          </select>
         </div>
 
         <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 20px" }}>
@@ -975,6 +1018,7 @@ export default function App() {
   const [rankingOpen, setRankingOpen] = useState(false);
   const [rankingSortBy, setRankingSortBy] = useState("all");
   const [rankingMinTradesInput, setRankingMinTradesInput] = useState("");
+  const [rankingExchangeFilter, setRankingExchangeFilter] = useState("ALL");
   const fileRef = useRef();
 
   useEffect(() => {
@@ -1134,6 +1178,11 @@ export default function App() {
   const sortedExchanges = Object.keys(treeByExchange).sort();
 
   const data = selectedKey ? datasets[selectedKey] : null;
+  const tradeDateRange = data ? getTradeDateRange(data.trades) : { start: "", end: "" };
+  const hasTradeDateRange = Boolean(tradeDateRange.start || tradeDateRange.end);
+  const hasFileDateRange = Boolean(data?.meta.startDate || data?.meta.endDate);
+  const dateRangeMismatch = hasTradeDateRange && hasFileDateRange
+    && (tradeDateRange.start !== (data?.meta.startDate || "") || tradeDateRange.end !== (data?.meta.endDate || ""));
 
   const tabContent = () => {
     if (!data) return null;
@@ -1193,6 +1242,8 @@ export default function App() {
           onSortByChange={setRankingSortBy}
           minTradesInput={rankingMinTradesInput}
           onMinTradesInputChange={setRankingMinTradesInput}
+          exchangeFilter={rankingExchangeFilter}
+          onExchangeFilterChange={setRankingExchangeFilter}
           onSelectDataset={(key) => {
             setSelectedKey(key);
             setActiveTab("overview");
@@ -1459,6 +1510,18 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              {hasTradeDateRange && (
+                <div style={{ margin: "10px 16px 0", padding: "10px 12px", border: `1px solid ${dateRangeMismatch ? "rgba(255,140,66,0.45)" : "rgba(77,166,255,0.35)"}`, borderRadius: 6, background: dateRangeMismatch ? "rgba(255,140,66,0.08)" : "rgba(77,166,255,0.08)" }}>
+                  <div style={{ fontSize: 10, color: dateRangeMismatch ? C.orange : C.blue, textTransform: "uppercase", letterSpacing: 1.2, marginBottom: 4 }}>
+                    Islem Tarih Araligi Uyarisi
+                  </div>
+                  <div style={{ fontSize: 11, color: C.text, lineHeight: 1.6 }}>
+                    CSV isminden: <span style={{ color: C.textBright, fontFamily: "monospace" }}>{(data.meta.startDate || "—")} — {(data.meta.endDate || "—")}</span>
+                    {"  |  "}
+                    Islemlerden hesaplanan: <span style={{ color: C.textBright, fontFamily: "monospace" }}>{tradeDateRange.start || "—"} — {tradeDateRange.end || "—"}</span>
+                  </div>
+                </div>
+              )}
               <div style={{ flex: 1, overflowY: "auto", padding: "22px 24px" }}>
                 {tabContent()}
               </div>
