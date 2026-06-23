@@ -282,9 +282,15 @@ const RANK_SORTS = [
   { id: "short", label: "Short Win Rate" },
 ];
 
-function RankingModal({ datasets, onClose }) {
-  const [sortBy, setSortBy] = useState("all");
-  const [minTradesInput, setMinTradesInput] = useState("");
+function RankingModal({
+  datasets,
+  sortBy,
+  onSortByChange,
+  minTradesInput,
+  onMinTradesInputChange,
+  onSelectDataset,
+  onClose,
+}) {
 
   const minTrades = Math.max(0, parseInt(minTradesInput, 10) || 0);
 
@@ -336,7 +342,7 @@ function RankingModal({ datasets, onClose }) {
 
         <div style={{ display: "flex", gap: 6, padding: "12px 20px", borderBottom: `1px solid ${C.border}`, flexWrap: "wrap", alignItems: "center" }}>
           {RANK_SORTS.map((s) => (
-            <button key={s.id} onClick={() => setSortBy(s.id)}
+            <button key={s.id} onClick={() => onSortByChange(s.id)}
               style={{ padding: "6px 14px", borderRadius: 3, cursor: "pointer", fontSize: 10, letterSpacing: 0.5, transition: "all .15s",
                 background: sortBy === s.id ? "rgba(0,229,160,0.12)" : "transparent",
                 border: `1px solid ${sortBy === s.id ? "rgba(0,229,160,0.35)" : "rgba(255,255,255,0.08)"}`,
@@ -350,7 +356,7 @@ function RankingModal({ datasets, onClose }) {
             type="number"
             min={0}
             value={minTradesInput}
-            onChange={(e) => setMinTradesInput(e.target.value)}
+            onChange={(e) => onMinTradesInputChange(e.target.value)}
             placeholder="0"
             style={{ width: 72, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, color: C.textBright, padding: "6px 10px", fontSize: 11, fontFamily: "monospace", outline: "none" }}
           />
@@ -374,7 +380,14 @@ function RankingModal({ datasets, onClose }) {
                 {rows.map((r, i) => (
                   <tr key={r.key} style={{ background: i % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent" }}>
                     <td style={{ ...tdStyle, color: C.muted, fontSize: 10 }}>{i + 1}</td>
-                    <td style={{ ...tdStyle, color: C.textBright, fontWeight: 700 }}>{r.pair}</td>
+                    <td style={tdStyle}>
+                      <button
+                        onClick={() => onSelectDataset(r.key)}
+                        style={{ background: "transparent", border: "none", padding: 0, margin: 0, color: C.textBright, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: "inherit" }}
+                      >
+                        {r.pair}
+                      </button>
+                    </td>
                     <td style={{ ...tdStyle, color: C.text }}>{r.timeframe}</td>
                     <td style={{ ...tdStyle, color: C.muted, fontSize: 10, whiteSpace: "nowrap" }}>
                       {r.startDate ? `${r.startDate.slice(0, 7)} › ${r.endDate?.slice(0, 7) || "—"}` : "—"}
@@ -957,8 +970,11 @@ export default function App() {
   const [toast,       setToast]       = useState(null);
   const [confirmDel,  setConfirmDel]  = useState(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [sidebarSort, setSidebarSort] = useState("coin"); // "coin" | "timeframe"
+  const [sidebarSort, setSidebarSort] = useState("coin"); // "coin" | "timeframe" | "exchange"
+  const [pairFilter,  setPairFilter]  = useState("");
   const [rankingOpen, setRankingOpen] = useState(false);
+  const [rankingSortBy, setRankingSortBy] = useState("all");
+  const [rankingMinTradesInput, setRankingMinTradesInput] = useState("");
   const fileRef = useRef();
 
   useEffect(() => {
@@ -1079,25 +1095,43 @@ export default function App() {
     }
   };
 
+  const normalizedPairFilter = pairFilter.trim().toLowerCase();
+  const filteredDatasetEntries = Object.entries(datasets).filter(([, ds]) => {
+    if (!normalizedPairFilter) return true;
+    const symbol = coinSymbol(ds.meta.pair).toLowerCase();
+    const fullPair = (ds.meta.pair || "").toLowerCase();
+    return symbol.includes(normalizedPairFilter) || fullPair.includes(normalizedPairFilter);
+  });
+
   // Sidebar tree — coin grouping
   const treeByCoin = {};
-  Object.entries(datasets).forEach(([key, ds]) => {
+  filteredDatasetEntries.forEach(([key, ds]) => {
     const p = ds.meta.pair;
     if (!treeByCoin[p]) treeByCoin[p] = [];
-    treeByCoin[p].push({ key, tf: ds.meta.timeframe, startDate: ds.meta.startDate, endDate: ds.meta.endDate });
+    treeByCoin[p].push({ key, tf: ds.meta.timeframe, exchange: ds.meta.exchange || "UNKNOWN", startDate: ds.meta.startDate, endDate: ds.meta.endDate });
   });
   Object.values(treeByCoin).forEach((arr) => arr.sort((a, b) => tfSort(a.tf, b.tf)));
   const sortedPairs = Object.keys(treeByCoin).sort();
 
   // Sidebar tree — timeframe grouping
   const treeByTF = {};
-  Object.entries(datasets).forEach(([key, ds]) => {
+  filteredDatasetEntries.forEach(([key, ds]) => {
     const tf = ds.meta.timeframe;
     if (!treeByTF[tf]) treeByTF[tf] = [];
-    treeByTF[tf].push({ key, pair: ds.meta.pair, startDate: ds.meta.startDate, endDate: ds.meta.endDate });
+    treeByTF[tf].push({ key, pair: ds.meta.pair, exchange: ds.meta.exchange || "UNKNOWN", startDate: ds.meta.startDate, endDate: ds.meta.endDate });
   });
   Object.values(treeByTF).forEach((arr) => arr.sort((a, b) => a.pair.localeCompare(b.pair)));
   const sortedTFs = Object.keys(treeByTF).sort((a, b) => tfSort(a, b));
+
+  // Sidebar tree — exchange grouping
+  const treeByExchange = {};
+  filteredDatasetEntries.forEach(([key, ds]) => {
+    const ex = ds.meta.exchange || "UNKNOWN";
+    if (!treeByExchange[ex]) treeByExchange[ex] = [];
+    treeByExchange[ex].push({ key, pair: ds.meta.pair, tf: ds.meta.timeframe, startDate: ds.meta.startDate, endDate: ds.meta.endDate });
+  });
+  Object.values(treeByExchange).forEach((arr) => arr.sort((a, b) => a.pair.localeCompare(b.pair) || tfSort(a.tf, b.tf)));
+  const sortedExchanges = Object.keys(treeByExchange).sort();
 
   const data = selectedKey ? datasets[selectedKey] : null;
 
@@ -1153,7 +1187,19 @@ export default function App() {
       )}
 
       {rankingOpen && (
-        <RankingModal datasets={datasets} onClose={() => setRankingOpen(false)} />
+        <RankingModal
+          datasets={datasets}
+          sortBy={rankingSortBy}
+          onSortByChange={setRankingSortBy}
+          minTradesInput={rankingMinTradesInput}
+          onMinTradesInputChange={setRankingMinTradesInput}
+          onSelectDataset={(key) => {
+            setSelectedKey(key);
+            setActiveTab("overview");
+            setRankingOpen(false);
+          }}
+          onClose={() => setRankingOpen(false)}
+        />
       )}
 
       {/* HEADER */}
@@ -1194,7 +1240,7 @@ export default function App() {
           <aside style={{ width: 240, borderRight: `1px solid ${C.border}`, background: "rgba(10,16,24,0.97)", overflowY: "auto", flexShrink: 0, display: "flex", flexDirection: "column" }}>
             {/* Sort toggle */}
             <div style={{ padding: "8px 10px", borderBottom: `1px solid ${C.border}`, background: "rgba(0,0,0,0.2)", display: "flex", gap: 4 }}>
-              {[{ id: "coin", label: "Coine Gore" }, { id: "timeframe", label: "TF'e Gore" }].map((s) => (
+              {[{ id: "coin", label: "Coine Gore" }, { id: "timeframe", label: "TF'e Gore" }, { id: "exchange", label: "Borsaya Gore" }].map((s) => (
                 <button key={s.id} onClick={() => setSidebarSort(s.id)}
                   style={{ flex: 1, padding: "4px 8px", borderRadius: 3, cursor: "pointer", fontSize: 9, fontFamily: "monospace", letterSpacing: 1, transition: "all .15s",
                     background: sidebarSort === s.id ? "rgba(0,229,160,0.1)" : "transparent",
@@ -1204,11 +1250,40 @@ export default function App() {
                 </button>
               ))}
             </div>
+            <div style={{ padding: "8px 10px", borderBottom: `1px solid ${C.border}`, background: "rgba(0,0,0,0.14)" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <input
+                  value={pairFilter}
+                  onChange={(e) => setPairFilter(e.target.value)}
+                  placeholder="Parite filtrele (orn. BTC)"
+                  aria-label="Parite filtreleme"
+                  spellCheck={false}
+                  style={{ flex: 1, background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, color: C.textBright, padding: "7px 10px", fontSize: 11, fontFamily: "monospace", outline: "none" }}
+                />
+                {pairFilter && (
+                  <button
+                    onClick={() => setPairFilter("")}
+                    style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, borderRadius: 4, width: 26, height: 26, cursor: "pointer", fontSize: 12, lineHeight: 1 }}
+                    aria-label="Filtreyi temizle"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              <div style={{ marginTop: 6, fontSize: 9, color: C.muted }}>
+                {filteredDatasetEntries.length} / {Object.keys(datasets).length} analiz
+              </div>
+            </div>
 
             {Object.keys(datasets).length === 0 ? (
               <div style={{ padding: "28px 16px", fontSize: 10, color: C.muted, lineHeight: 1.9, textAlign: "center" }}>
                 <div style={{ fontSize: 28, marginBottom: 10, opacity: 0.2 }}>◫</div>
                 Kayitli analiz yok.<br />CSV yukleyerek basla.
+              </div>
+            ) : filteredDatasetEntries.length === 0 ? (
+              <div style={{ padding: "20px 16px", fontSize: 10, color: C.muted, lineHeight: 1.8, textAlign: "center" }}>
+                <div style={{ fontSize: 20, marginBottom: 8, opacity: 0.25 }}>⌕</div>
+                Filtreye uygun parite bulunamadi.
               </div>
             ) : sidebarSort === "coin" ? (
               sortedPairs.map((pair) => (
@@ -1218,13 +1293,56 @@ export default function App() {
                     <EditableText value={coinSymbol(pair)} onSave={(v) => { treeByCoin[pair].forEach(({ key }) => handleMetaEdit(key, "pair", v.toUpperCase() + "USDT")); }} style={{ color: C.textBright, fontSize: 11, fontWeight: 700, letterSpacing: 2 }} />
                     <span style={{ fontSize: 8, color: C.muted, marginLeft: "auto" }}>{treeByCoin[pair].length} TF</span>
                   </div>
-                  {treeByCoin[pair].map(({ key, tf, startDate, endDate }) => {
+                  {treeByCoin[pair].map(({ key, tf, exchange, startDate, endDate }) => {
                     const isActive = key === selectedKey;
                     return (
                       <div key={key} style={{ display: "flex", alignItems: "stretch", borderLeft: `2px solid ${isActive ? C.green : "transparent"}`, background: isActive ? "rgba(0,229,160,0.07)" : "transparent", transition: "all .15s" }}>
                         <div onClick={() => { setSelectedKey(key); setActiveTab("overview"); }} style={{ flex: 1, padding: "8px 14px 8px 18px", cursor: "pointer" }}>
-                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace" }}>
+                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6 }}>
                             <EditableText value={tf} onSave={(v) => handleMetaEdit(key, "timeframe", v)} style={{ color: isActive ? C.green : C.text, fontSize: 12, fontWeight: isActive ? 700 : 400 }} />
+                            <span style={{ fontSize: 9, color: C.blue, border: "1px solid rgba(77,166,255,0.35)", borderRadius: 3, padding: "1px 5px", lineHeight: 1.2 }}>
+                              {exchange || "UNKNOWN"}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 12, color: C.textBright, marginTop: 4, fontFamily: "monospace", fontWeight: 600 }}>
+                            {startDate ? (
+                              <span>
+                                <EditableText value={startDate} onSave={(v) => handleMetaEdit(key, "startDate", v)} style={{ color: C.textBright, fontSize: 12 }} />
+                                <span style={{ color: C.muted, margin: "0 4px" }}>›</span>
+                                <EditableText value={endDate || ""} onSave={(v) => handleMetaEdit(key, "endDate", v)} style={{ color: C.textBright, fontSize: 12 }} />
+                              </span>
+                            ) : <span style={{ color: C.muted }}>—</span>}
+                          </div>
+                        </div>
+                        <button onClick={(e) => { e.stopPropagation(); setConfirmDel(key); }}
+                          style={{ background: "transparent", border: "none", color: "rgba(255,71,87,0.3)", cursor: "pointer", padding: "0 10px", fontSize: 12, transition: "color .15s" }}
+                          onMouseEnter={(e) => (e.currentTarget.style.color = C.red)}
+                          onMouseLeave={(e) => (e.currentTarget.style.color = "rgba(255,71,87,0.3)")}>
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))
+            ) : sidebarSort === "timeframe" ? (
+              sortedTFs.map((tf) => (
+                <div key={tf} style={{ borderBottom: `1px solid ${C.border}` }}>
+                  <div style={{ padding: "9px 14px 5px", fontSize: 11, color: C.textBright, fontWeight: 700, letterSpacing: 2, background: "rgba(77,166,255,0.03)", display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.blue, display: "inline-block" }} />
+                    {tf}
+                    <span style={{ fontSize: 8, color: C.muted, marginLeft: "auto" }}>{treeByTF[tf].length} coin</span>
+                  </div>
+                  {treeByTF[tf].map(({ key, pair, exchange, startDate, endDate }) => {
+                    const isActive = key === selectedKey;
+                    return (
+                      <div key={key} style={{ display: "flex", alignItems: "stretch", borderLeft: `2px solid ${isActive ? C.green : "transparent"}`, background: isActive ? "rgba(0,229,160,0.07)" : "transparent", transition: "all .15s" }}>
+                        <div onClick={() => { setSelectedKey(key); setActiveTab("overview"); }} style={{ flex: 1, padding: "8px 14px 8px 18px", cursor: "pointer" }}>
+                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6 }}>
+                            <EditableText value={coinSymbol(pair)} onSave={(v) => handleMetaEdit(key, "pair", v.toUpperCase() + "USDT")} style={{ color: isActive ? C.green : C.text, fontSize: 12, fontWeight: isActive ? 700 : 400 }} />
+                            <span style={{ fontSize: 9, color: C.blue, border: "1px solid rgba(77,166,255,0.35)", borderRadius: 3, padding: "1px 5px", lineHeight: 1.2 }}>
+                              {exchange || "UNKNOWN"}
+                            </span>
                           </div>
                           <div style={{ fontSize: 12, color: C.textBright, marginTop: 4, fontFamily: "monospace", fontWeight: 600 }}>
                             {startDate ? (
@@ -1248,29 +1366,24 @@ export default function App() {
                 </div>
               ))
             ) : (
-              sortedTFs.map((tf) => (
-                <div key={tf} style={{ borderBottom: `1px solid ${C.border}` }}>
+              sortedExchanges.map((exchange) => (
+                <div key={exchange} style={{ borderBottom: `1px solid ${C.border}` }}>
                   <div style={{ padding: "9px 14px 5px", fontSize: 11, color: C.textBright, fontWeight: 700, letterSpacing: 2, background: "rgba(77,166,255,0.03)", display: "flex", alignItems: "center", gap: 8 }}>
                     <span style={{ width: 6, height: 6, borderRadius: "50%", background: C.blue, display: "inline-block" }} />
-                    {tf}
-                    <span style={{ fontSize: 8, color: C.muted, marginLeft: "auto" }}>{treeByTF[tf].length} coin</span>
+                    {exchange}
+                    <span style={{ fontSize: 8, color: C.muted, marginLeft: "auto" }}>{treeByExchange[exchange].length} analiz</span>
                   </div>
-                  {treeByTF[tf].map(({ key, pair, startDate, endDate }) => {
+                  {treeByExchange[exchange].map(({ key, pair, tf, startDate, endDate }) => {
                     const isActive = key === selectedKey;
                     return (
                       <div key={key} style={{ display: "flex", alignItems: "stretch", borderLeft: `2px solid ${isActive ? C.green : "transparent"}`, background: isActive ? "rgba(0,229,160,0.07)" : "transparent", transition: "all .15s" }}>
                         <div onClick={() => { setSelectedKey(key); setActiveTab("overview"); }} style={{ flex: 1, padding: "8px 14px 8px 18px", cursor: "pointer" }}>
-                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace" }}>
+                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6 }}>
                             <EditableText value={coinSymbol(pair)} onSave={(v) => handleMetaEdit(key, "pair", v.toUpperCase() + "USDT")} style={{ color: isActive ? C.green : C.text, fontSize: 12, fontWeight: isActive ? 700 : 400 }} />
+                            <span style={{ fontSize: 9, color: C.green }}>{tf}</span>
                           </div>
                           <div style={{ fontSize: 12, color: C.textBright, marginTop: 4, fontFamily: "monospace", fontWeight: 600 }}>
-                            {startDate ? (
-                              <span>
-                                <EditableText value={startDate} onSave={(v) => handleMetaEdit(key, "startDate", v)} style={{ color: C.textBright, fontSize: 12 }} />
-                                <span style={{ color: C.muted, margin: "0 4px" }}>›</span>
-                                <EditableText value={endDate || ""} onSave={(v) => handleMetaEdit(key, "endDate", v)} style={{ color: C.textBright, fontSize: 12 }} />
-                              </span>
-                            ) : <span style={{ color: C.muted }}>—</span>}
+                            {startDate ? `${startDate.slice(0,7)} › ${endDate?.slice(0,7) || "—"}` : "—"}
                           </div>
                         </div>
                         <button onClick={(e) => { e.stopPropagation(); setConfirmDel(key); }}
