@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS public.datasets (
   timeframe     TEXT NOT NULL DEFAULT 'main',
   start_date    TEXT,
   end_date      TEXT,
+  exchange      TEXT DEFAULT 'UNKNOWN',
   contract_type TEXT DEFAULT 'P',
   filename      TEXT,
   trades        JSONB NOT NULL DEFAULT '[]'::jsonb,

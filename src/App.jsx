@@ -88,6 +88,19 @@ function normalizeTimeframe(tf) {
   return tf === "1M" ? "1M" : tf.toLowerCase();
 }
 
+function inferExchangeFromFilename(name) {
+  const lower = (name || "").toLowerCase();
+  if (lower.includes("mexc")) return "MEXC";
+  if (lower.includes("ibkr")) return "IBKR";
+  if (lower.includes("binance")) return "BINANCE";
+  if (lower.includes("bybit")) return "BYBIT";
+  if (lower.includes("okx")) return "OKX";
+  if (lower.includes("kucoin")) return "KUCOIN";
+  if (lower.includes("coinbase")) return "COINBASE";
+  if (lower.includes("gate")) return "GATE";
+  return "";
+}
+
 function coinSymbol(pair) {
   if (!pair) return "?";
   return pair.replace(/\..*$/, "").replace(/USDT$/i, "").toUpperCase();
@@ -136,7 +149,7 @@ function parseFilename(name) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  CSV PARSER
 // ─────────────────────────────────────────────────────────────────────────────
-function parseCSV(text, filename) {
+function parseCSV(text, filename, exchange = "") {
   const lines   = text.trim().split(/\r?\n/);
   const headers = lines[0].split(",").map((h) => h.trim());
   const trades  = lines.slice(1).map((line) => {
@@ -159,6 +172,7 @@ function parseCSV(text, filename) {
     };
   });
   const meta = parseFilename(filename);
+  meta.exchange = exchange || inferExchangeFromFilename(filename) || "UNKNOWN";
   return { meta, trades, filename, uploadedAt: new Date().toISOString() };
 }
 
@@ -475,6 +489,7 @@ function OverviewTab({ data }) {
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(155px,1fr))", gap: 10 }}>
         {[
           ["Parite",    meta.pair],
+          ["Borsa",     meta.exchange || "UNKNOWN"],
           ["Kontrat",   meta.contractType === "P" ? "Perpetual" : (meta.contractType || "Spot")],
           ["Timeframe", meta.timeframe],
           ["Baslangic", meta.startDate || "—"],
@@ -965,6 +980,16 @@ export default function App() {
       reader.readAsText(file, "utf-8");
     });
 
+  const askExchangeForFile = (fileName) => {
+    if (typeof window === "undefined") return "UNKNOWN";
+    const answer = window.prompt(
+      `"${fileName}" dosyasi icin borsa bulunamadi.\nLutfen borsa adini gir (or: MEXC, BINANCE, IBKR):`,
+      ""
+    );
+    const normalized = (answer || "").trim().toUpperCase();
+    return normalized || "UNKNOWN";
+  };
+
   const handleFiles = useCallback(async (fileList) => {
     if (!fileList?.length) return;
     const files = Array.from(fileList).filter((f) => f.name.toLowerCase().endsWith(".csv"));
@@ -987,7 +1012,9 @@ export default function App() {
       setUploadProgress({ current: i + 1, total: files.length });
       try {
         const text = await readFileAsText(file);
-        const dataset = parseCSV(text, file.name);
+        const inferredExchange = inferExchangeFromFilename(file.name);
+        const exchange = inferredExchange || askExchangeForFile(file.name);
+        const dataset = parseCSV(text, file.name, exchange);
         const key = dataset.meta.storageKey;
         await dbSaveDataset(key, dataset);
         setDatasets((prev) => ({ ...prev, [key]: dataset }));
@@ -1294,6 +1321,9 @@ export default function App() {
                 <span style={{ color: C.muted, fontSize: 16 }}>›</span>
                 <span style={{ color: C.green, border: `1px solid rgba(0,229,160,0.3)`, padding: "2px 12px", borderRadius: 2, fontSize: 12, fontFamily: "monospace" }}>
                   <EditableText value={data.meta.timeframe} onSave={(v) => handleMetaEdit(selectedKey, "timeframe", v)} style={{ color: C.green, fontSize: 12 }} />
+                </span>
+                <span style={{ color: C.blue, border: `1px solid rgba(77,166,255,0.3)`, padding: "2px 10px", borderRadius: 2, fontSize: 11, fontFamily: "monospace" }}>
+                  <EditableText value={data.meta.exchange || "UNKNOWN"} onSave={(v) => handleMetaEdit(selectedKey, "exchange", v.toUpperCase())} style={{ color: C.blue, fontSize: 11 }} />
                 </span>
                 {data.meta.contractType === "P" && <span style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Perpetual</span>}
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
