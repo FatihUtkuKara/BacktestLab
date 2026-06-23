@@ -17,6 +17,8 @@ const tfSort   = (a, b) => {
   return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib);
 };
 
+const SL_FILTER_THRESHOLD = 0.6;
+
 const SL_BUCKETS = [
   { label: "0-0.5",  min: 0,   max: 0.5 },
   { label: "0.5-1",  min: 0.5, max: 1.0 },
@@ -156,13 +158,21 @@ function parseCSV(text, filename, exchange = "") {
     const vals = line.split(",");
     const r    = {};
     headers.forEach((h, i) => { r[h] = (vals[i] ?? "").trim(); });
+    const entryPrice = parseFloat(r["entry_price"]) || 0;
+    const slPrice    = parseFloat(r["sl_price"])    || 0;
+    const slFromCsv  = parseFloat(r["entry_sl_pct"]) || 0;
+    const slPct      = slFromCsv > 0
+      ? slFromCsv
+      : entryPrice
+        ? +((Math.abs(slPrice - entryPrice) / entryPrice) * 100).toFixed(4)
+        : 0;
     return {
       entryTime:    r["entry_time"]           || "",
       direction:    (r["direction"]           || "").toUpperCase(),
-      entryPrice:   parseFloat(r["entry_price"])   || 0,
+      entryPrice,
       tpPrice:      parseFloat(r["tp_price"])      || 0,
-      slPrice:      parseFloat(r["sl_price"])      || 0,
-      slPct:        parseFloat(r["entry_sl_pct"])  || 0,
+      slPrice,
+      slPct,
       result:       (r["result"]             || "").toUpperCase(),
       exitTime:     r["exit_time"]           || "",
       conflictType: (r["conflict_type"]      || "none").toLowerCase(),
@@ -181,6 +191,47 @@ function parseCSV(text, filename, exchange = "") {
 // ─────────────────────────────────────────────────────────────────────────────
 const validTrades = (trades) => trades.filter((t) => t.result !== "CONFLICT");
 
+function tradeSlPct(t) {
+  if (t.slPct > 0) return t.slPct;
+  if (!t.entryPrice) return 0;
+  return (Math.abs(t.slPrice - t.entryPrice) / t.entryPrice) * 100;
+}
+
+function getSlFilterInfo(trades) {
+  const pcts = validTrades(trades)
+    .filter((t) => t.result === "TP" || t.result === "SL")
+    .map(tradeSlPct)
+    .filter((p) => p > 0);
+  if (!pcts.length) return { minSl: null, belowCount: 0, status: "unknown" };
+  const minSl = Math.min(...pcts);
+  const belowCount = pcts.filter((p) => p < SL_FILTER_THRESHOLD).length;
+  if (belowCount === 0) return { minSl, belowCount: 0, status: "filtered" };
+  return { minSl, belowCount, status: "includes" };
+}
+
+function SlFilterBadge({ trades, compact = false }) {
+  const info = getSlFilterInfo(trades);
+  if (info.status === "unknown") return null;
+  const filtered = info.status === "filtered";
+  const label = filtered ? "≥0.6%" : (compact ? "<0.6%" : `<0.6% (${info.belowCount})`);
+  const title = filtered
+    ? `Min SL: ${info.minSl.toFixed(2)}% — 0.6% alti islem yok`
+    : `Min SL: ${info.minSl.toFixed(2)}% — ${info.belowCount} islem 0.6% altinda`;
+  return (
+    <span title={title} style={{
+      fontSize: 9,
+      color: filtered ? C.orange : "#c9a227",
+      border: `1px solid ${filtered ? "rgba(255,140,66,0.45)" : "rgba(201,162,39,0.4)"}`,
+      borderRadius: 3,
+      padding: "1px 5px",
+      lineHeight: 1.2,
+      whiteSpace: "nowrap",
+    }}>
+      {label}
+    </span>
+  );
+}
+
 function wrEvolution(list) {
   let tp = 0, sl = 0;
   return list.map((t, i) => {
@@ -191,7 +242,10 @@ function wrEvolution(list) {
 
 function slDistribution(trades) {
   return SL_BUCKETS.map((b) => {
-    const inn = trades.filter((t) => t.slPct >= b.min && t.slPct < b.max);
+    const inn = trades.filter((t) => {
+      const p = tradeSlPct(t);
+      return p >= b.min && p < b.max;
+    });
     const tp  = inn.filter((t) => t.result === "TP").length;
     const sl  = inn.filter((t) => t.result === "SL").length;
     const tot = tp + sl;
@@ -328,6 +382,7 @@ function RankingModal({
   const rows = Object.entries(datasets)
     .map(([key, ds]) => {
       const rates = calcWinRates(ds.trades);
+      const slInfo = getSlFilterInfo(ds.trades);
       return {
         key,
         pair: coinSymbol(ds.meta.pair),
@@ -335,6 +390,7 @@ function RankingModal({
         timeframe: ds.meta.timeframe,
         startDate: ds.meta.startDate,
         endDate: ds.meta.endDate,
+        slInfo,
         ...rates,
       };
     })
@@ -414,7 +470,7 @@ function RankingModal({
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12, marginTop: 12 }}>
               <thead>
                 <tr>
-                  {["#", "Parite", "TF", "Tarih", ...wrColOrder.map((c) => c.label), "Islem"].map((h) => (
+                  {["#", "Parite", "TF", "SL", "Tarih", ...wrColOrder.map((c) => c.label), "Islem"].map((h) => (
                     <th key={h} style={thStyle}>{h}</th>
                   ))}
                 </tr>
@@ -432,6 +488,9 @@ function RankingModal({
                       </button>
                     </td>
                     <td style={{ ...tdStyle, color: C.text }}>{r.timeframe}</td>
+                    <td style={tdStyle}>
+                      <SlFilterBadge trades={datasets[r.key]?.trades || []} compact />
+                    </td>
                     <td style={{ ...tdStyle, color: C.muted, fontSize: 10, whiteSpace: "nowrap" }}>
                       {r.startDate ? `${r.startDate.slice(0, 7)} › ${r.endDate?.slice(0, 7) || "—"}` : "—"}
                     </td>
@@ -520,6 +579,7 @@ function OverviewTab({ data }) {
   const wrS    = shorts.length ? +((shorts.filter((t) => t.result === "TP").length / shorts.length) * 100).toFixed(1) : 0;
   const { maxTP, maxSL } = calcStreaks(valid);
   const conflictCount = trades.filter((t) => t.result === "CONFLICT").length;
+  const slInfo = getSlFilterInfo(trades);
 
   return (
     <div>
@@ -550,6 +610,8 @@ function OverviewTab({ data }) {
           ["Timeframe", meta.timeframe],
           ["Baslangic", meta.startDate || "—"],
           ["Bitis",     meta.endDate   || "—"],
+          ["SL Filtre", slInfo.status === "filtered" ? "≥0.6% (alt islem yok)" : slInfo.status === "includes" ? `<0.6% (${slInfo.belowCount} islem)` : "—"],
+          ["Min SL%",   slInfo.minSl != null ? `${slInfo.minSl.toFixed(2)}%` : "—"],
           ["Yuklendi",  new Date(uploadedAt).toLocaleDateString("tr-TR")],
         ].map(([k, v]) => (
           <div key={k} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 4, padding: "10px 14px" }}>
@@ -1349,11 +1411,12 @@ export default function App() {
                     return (
                       <div key={key} style={{ display: "flex", alignItems: "stretch", borderLeft: `2px solid ${isActive ? C.green : "transparent"}`, background: isActive ? "rgba(0,229,160,0.07)" : "transparent", transition: "all .15s" }}>
                         <div onClick={() => { setSelectedKey(key); setActiveTab("overview"); }} style={{ flex: 1, padding: "8px 14px 8px 18px", cursor: "pointer" }}>
-                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                             <EditableText value={tf} onSave={(v) => handleMetaEdit(key, "timeframe", v)} style={{ color: isActive ? C.green : C.text, fontSize: 12, fontWeight: isActive ? 700 : 400 }} />
                             <span style={{ fontSize: 9, color: C.blue, border: "1px solid rgba(77,166,255,0.35)", borderRadius: 3, padding: "1px 5px", lineHeight: 1.2 }}>
                               {exchange || "UNKNOWN"}
                             </span>
+                            <SlFilterBadge trades={datasets[key]?.trades || []} compact />
                           </div>
                           <div style={{ fontSize: 12, color: C.textBright, marginTop: 4, fontFamily: "monospace", fontWeight: 600 }}>
                             {startDate ? (
@@ -1389,11 +1452,12 @@ export default function App() {
                     return (
                       <div key={key} style={{ display: "flex", alignItems: "stretch", borderLeft: `2px solid ${isActive ? C.green : "transparent"}`, background: isActive ? "rgba(0,229,160,0.07)" : "transparent", transition: "all .15s" }}>
                         <div onClick={() => { setSelectedKey(key); setActiveTab("overview"); }} style={{ flex: 1, padding: "8px 14px 8px 18px", cursor: "pointer" }}>
-                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                             <EditableText value={coinSymbol(pair)} onSave={(v) => handleMetaEdit(key, "pair", v.toUpperCase() + "USDT")} style={{ color: isActive ? C.green : C.text, fontSize: 12, fontWeight: isActive ? 700 : 400 }} />
                             <span style={{ fontSize: 9, color: C.blue, border: "1px solid rgba(77,166,255,0.35)", borderRadius: 3, padding: "1px 5px", lineHeight: 1.2 }}>
                               {exchange || "UNKNOWN"}
                             </span>
+                            <SlFilterBadge trades={datasets[key]?.trades || []} compact />
                           </div>
                           <div style={{ fontSize: 12, color: C.textBright, marginTop: 4, fontFamily: "monospace", fontWeight: 600 }}>
                             {startDate ? (
@@ -1429,9 +1493,10 @@ export default function App() {
                     return (
                       <div key={key} style={{ display: "flex", alignItems: "stretch", borderLeft: `2px solid ${isActive ? C.green : "transparent"}`, background: isActive ? "rgba(0,229,160,0.07)" : "transparent", transition: "all .15s" }}>
                         <div onClick={() => { setSelectedKey(key); setActiveTab("overview"); }} style={{ flex: 1, padding: "8px 14px 8px 18px", cursor: "pointer" }}>
-                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6 }}>
+                          <div style={{ fontSize: 12, color: isActive ? C.green : C.text, fontWeight: isActive ? 700 : 400, fontFamily: "monospace", display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                             <EditableText value={coinSymbol(pair)} onSave={(v) => handleMetaEdit(key, "pair", v.toUpperCase() + "USDT")} style={{ color: isActive ? C.green : C.text, fontSize: 12, fontWeight: isActive ? 700 : 400 }} />
                             <span style={{ fontSize: 9, color: C.green }}>{tf}</span>
+                            <SlFilterBadge trades={datasets[key]?.trades || []} compact />
                           </div>
                           <div style={{ fontSize: 12, color: C.textBright, marginTop: 4, fontFamily: "monospace", fontWeight: 600 }}>
                             {startDate ? `${startDate.slice(0,7)} › ${endDate?.slice(0,7) || "—"}` : "—"}
@@ -1489,6 +1554,7 @@ export default function App() {
                 <span style={{ color: C.blue, border: `1px solid rgba(77,166,255,0.3)`, padding: "2px 10px", borderRadius: 2, fontSize: 11, fontFamily: "monospace" }}>
                   <EditableText value={data.meta.exchange || "UNKNOWN"} onSave={(v) => handleMetaEdit(selectedKey, "exchange", v.toUpperCase())} style={{ color: C.blue, fontSize: 11 }} />
                 </span>
+                <SlFilterBadge trades={data.trades} />
                 {data.meta.contractType === "P" && <span style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Perpetual</span>}
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
                   {data.meta.startDate && (
