@@ -148,13 +148,50 @@ function parseFilename(name) {
   return { pair, contractType, startDate, endDate, timeframe, storageKey };
 }
 
+const PAIR_COLUMN_NAMES = ["pair", "symbol", "ticker", "coin", "instrument", "asset", "market", "parite", "pairs"];
+
+function extractTradePair(row, fallbackPair = "") {
+  const keys = Object.keys(row);
+  for (const col of PAIR_COLUMN_NAMES) {
+    const key = keys.find((k) => k.toLowerCase() === col);
+    if (!key) continue;
+    const raw = (row[key] || "").trim();
+    if (!raw) continue;
+    return normalizePair(raw).pair;
+  }
+  return fallbackPair;
+}
+
+function getUniqueTradePairs(trades) {
+  const pairs = new Set();
+  (trades || []).forEach((t) => { if (t.pair) pairs.add(t.pair); });
+  return [...pairs].sort();
+}
+
+function getTradePairCounts(trades) {
+  const map = {};
+  (trades || []).forEach((t) => {
+    if (!t.pair) return;
+    map[t.pair] = (map[t.pair] || 0) + 1;
+  });
+  return map;
+}
+
+function filterTradesByPairs(trades, selectedPairs) {
+  if (!selectedPairs?.length) return [];
+  const set = new Set(selectedPairs);
+  return (trades || []).filter((t) => t.pair && set.has(t.pair));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 //  CSV PARSER
 // ─────────────────────────────────────────────────────────────────────────────
 function parseCSV(text, filename, exchange = "") {
   const lines   = text.trim().split(/\r?\n/);
   const headers = lines[0].split(",").map((h) => h.trim());
-  const trades  = lines.slice(1).map((line) => {
+  const meta    = parseFilename(filename);
+  meta.exchange = exchange || inferExchangeFromFilename(filename) || "UNKNOWN";
+  const trades  = lines.slice(1).filter((line) => line.trim()).map((line) => {
     const vals = line.split(",");
     const r    = {};
     headers.forEach((h, i) => { r[h] = (vals[i] ?? "").trim(); });
@@ -167,6 +204,7 @@ function parseCSV(text, filename, exchange = "") {
         ? +((Math.abs(slPrice - entryPrice) / entryPrice) * 100).toFixed(4)
         : 0;
     return {
+      pair:         extractTradePair(r, meta.pair),
       entryTime:    r["entry_time"]           || "",
       direction:    (r["direction"]           || "").toUpperCase(),
       entryPrice,
@@ -181,8 +219,6 @@ function parseCSV(text, filename, exchange = "") {
       overallWR:    r["overall_win_rate_pct"]|| "",
     };
   });
-  const meta = parseFilename(filename);
-  meta.exchange = exchange || inferExchangeFromFilename(filename) || "UNKNOWN";
   return { meta, trades, filename, uploadedAt: new Date().toISOString() };
 }
 
@@ -208,10 +244,13 @@ function csvCell(val) {
 }
 
 function tradesToCSV(trades) {
-  const rows = [CSV_EXPORT_HEADERS.join(",")];
+  const hasPairCol = (trades || []).some((t) => t.pair);
+  const headers = hasPairCol ? ["pair", ...CSV_EXPORT_HEADERS] : CSV_EXPORT_HEADERS;
+  const rows = [headers.join(",")];
   (trades || []).forEach((t) => {
     const slPct = tradeSlPct(t);
-    rows.push([
+    const row = [
+      ...(hasPairCol ? [t.pair || ""] : []),
       t.entryTime,
       t.direction,
       t.entryPrice || "",
@@ -224,7 +263,8 @@ function tradesToCSV(trades) {
       t.month,
       t.monthWR,
       t.overallWR,
-    ].map(csvCell).join(","));
+    ].map(csvCell);
+    rows.push(row.join(","));
   });
   return rows.join("\n");
 }
@@ -685,7 +725,7 @@ function SecTitle({ children }) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  TAB COMPONENTS
 // ─────────────────────────────────────────────────────────────────────────────
-function OverviewTab({ data, totalTradeCount, isDateFilterActive }) {
+function OverviewTab({ data, totalTradeCount, isDateFilterActive, isPairFilterActive }) {
   const { trades, meta, uploadedAt } = data;
   const valid  = validTrades(trades);
   const longs  = valid.filter((t) => t.direction === "LONG");
@@ -698,9 +738,13 @@ function OverviewTab({ data, totalTradeCount, isDateFilterActive }) {
   const { maxTP, maxSL } = calcStreaks(valid);
   const conflictCount = trades.filter((t) => t.result === "CONFLICT").length;
   const slInfo = getSlFilterInfo(trades);
-  const tradeSub = isDateFilterActive && totalTradeCount != null
-    ? `${conflictCount} conflict haric · ${valid.length}/${totalTradeCount} (filtreli)`
+  const filterNote = (isDateFilterActive || isPairFilterActive) && totalTradeCount != null
+    ? `${valid.length}/${totalTradeCount} (filtreli)`
+    : null;
+  const tradeSub = filterNote
+    ? `${conflictCount} conflict haric · ${filterNote}`
     : `${conflictCount} conflict haric`;
+  const activePairs = getUniqueTradePairs(trades);
 
   return (
     <div>
@@ -725,7 +769,7 @@ function OverviewTab({ data, totalTradeCount, isDateFilterActive }) {
       <SecTitle>Dosya Bilgisi</SecTitle>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill,minmax(155px,1fr))", gap: 10 }}>
         {[
-          ["Parite",    meta.pair],
+          ["Parite",    activePairs.length > 1 ? `${activePairs.length} parite (karma)` : meta.pair],
           ["Dosya",     data.filename || "—"],
           ["Borsa",     meta.exchange || "UNKNOWN"],
           ["Kontrat",   meta.contractType === "P" ? "Perpetual" : (meta.contractType || "Spot")],
@@ -1207,6 +1251,7 @@ export default function App() {
   const [rankingDateEnd, setRankingDateEnd] = useState("");
   const [analysisDateStart, setAnalysisDateStart] = useState("");
   const [analysisDateEnd, setAnalysisDateEnd] = useState("");
+  const [selectedTradePairs, setSelectedTradePairs] = useState([]);
   const fileRef = useRef();
   const pendingAnalysisDates = useRef(null);
 
@@ -1221,8 +1266,11 @@ export default function App() {
     if (!ds?.trades?.length) {
       setAnalysisDateStart("");
       setAnalysisDateEnd("");
+      setSelectedTradePairs([]);
       return;
     }
+    const pairs = getUniqueTradePairs(ds.trades);
+    setSelectedTradePairs(pairs.length > 1 ? pairs : []);
     if (pendingAnalysisDates.current) {
       const { start, end } = pendingAnalysisDates.current;
       pendingAnalysisDates.current = null;
@@ -1234,6 +1282,12 @@ export default function App() {
     setAnalysisDateStart(range.start || ds.meta.startDate || "");
     setAnalysisDateEnd(range.end || ds.meta.endDate || "");
   }, [selectedKey]);
+
+  const toggleTradePair = (pair) => {
+    setSelectedTradePairs((prev) => (
+      prev.includes(pair) ? prev.filter((p) => p !== pair) : [...prev, pair]
+    ));
+  };
 
   const showToast = (msg, type = "ok") => {
     setToast({ msg, type });
@@ -1386,9 +1440,18 @@ export default function App() {
   const sortedExchanges = Object.keys(treeByExchange).sort();
 
   const data = selectedKey ? datasets[selectedKey] : null;
-  const tradeDateRange = data ? getTradeDateRange(data.trades) : { start: "", end: "" };
+  const allTradePairs = data ? getUniqueTradePairs(data.trades) : [];
+  const hasMultiPair = allTradePairs.length > 1;
+  const tradePairCounts = data ? getTradePairCounts(data.trades) : {};
+  const isPairFilterActive = hasMultiPair && selectedTradePairs.length < allTradePairs.length;
+  const pairFilteredTrades = hasMultiPair
+    ? filterTradesByPairs(data.trades, selectedTradePairs)
+    : (data?.trades || []);
+  const tradeDateRange = data
+    ? getTradeDateRange(pairFilteredTrades.length ? pairFilteredTrades : data.trades)
+    : { start: "", end: "" };
   const filteredTrades = data
-    ? filterTradesByDateRange(data.trades, analysisDateStart, analysisDateEnd)
+    ? filterTradesByDateRange(pairFilteredTrades, analysisDateStart, analysisDateEnd)
     : [];
   const filteredData = data ? { ...data, trades: filteredTrades } : null;
   const totalTradeCount = data ? validTrades(data.trades).length : 0;
@@ -1397,6 +1460,7 @@ export default function App() {
     data && tradeDateRange.start && tradeDateRange.end
     && (analysisDateStart !== tradeDateRange.start || analysisDateEnd !== tradeDateRange.end)
   );
+  const isAnyFilterActive = isDateFilterActive || isPairFilterActive;
   const hasTradeDateRange = Boolean(tradeDateRange.start || tradeDateRange.end);
   const hasFileDateRange = Boolean(data?.meta.startDate || data?.meta.endDate);
   const dateRangeMismatch = hasTradeDateRange && hasFileDateRange
@@ -1405,7 +1469,7 @@ export default function App() {
   const tabContent = () => {
     if (!filteredData) return null;
     switch (activeTab) {
-      case "overview":     return <OverviewTab     data={filteredData} totalTradeCount={totalTradeCount} isDateFilterActive={isDateFilterActive} />;
+      case "overview":     return <OverviewTab     data={filteredData} totalTradeCount={totalTradeCount} isDateFilterActive={isDateFilterActive} isPairFilterActive={isPairFilterActive} />;
       case "winrate":      return <WinRateTab      data={filteredData} />;
       case "distribution": return <DistributionTab data={filteredData} />;
       case "equity":       return <EquityTab       data={filteredData} />;
@@ -1707,9 +1771,15 @@ export default function App() {
           ) : (
             <>
               <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 20px", borderBottom: `1px solid ${C.border}`, background: "rgba(10,16,24,0.85)", flexShrink: 0, flexWrap: "wrap" }}>
-                <span style={{ fontSize: 18, fontWeight: 700, color: C.textBright, letterSpacing: 3 }}>
-                  <EditableText value={coinSymbol(data.meta.pair)} onSave={(v) => handleMetaEdit(selectedKey, "pair", v.toUpperCase() + "USDT")} style={{ color: C.textBright, fontSize: 18, fontWeight: 700, letterSpacing: 3 }} />
-                </span>
+                {hasMultiPair ? (
+                  <span style={{ fontSize: 18, fontWeight: 700, color: C.textBright, letterSpacing: 2 }}>
+                    {allTradePairs.length} PARITE
+                  </span>
+                ) : (
+                  <span style={{ fontSize: 18, fontWeight: 700, color: C.textBright, letterSpacing: 3 }}>
+                    <EditableText value={coinSymbol(data.meta.pair)} onSave={(v) => handleMetaEdit(selectedKey, "pair", v.toUpperCase() + "USDT")} style={{ color: C.textBright, fontSize: 18, fontWeight: 700, letterSpacing: 3 }} />
+                  </span>
+                )}
                 <span style={{ color: C.muted, fontSize: 16 }}>›</span>
                 <span style={{ color: C.green, border: `1px solid rgba(0,229,160,0.3)`, padding: "2px 12px", borderRadius: 2, fontSize: 12, fontFamily: "monospace" }}>
                   <EditableText value={data.meta.timeframe} onSave={(v) => handleMetaEdit(selectedKey, "timeframe", v)} style={{ color: C.green, fontSize: 12 }} />
@@ -1717,7 +1787,7 @@ export default function App() {
                 <span style={{ color: C.blue, border: `1px solid rgba(77,166,255,0.3)`, padding: "2px 10px", borderRadius: 2, fontSize: 11, fontFamily: "monospace" }}>
                   <EditableText value={data.meta.exchange || "UNKNOWN"} onSave={(v) => handleMetaEdit(selectedKey, "exchange", v.toUpperCase())} style={{ color: C.blue, fontSize: 11 }} />
                 </span>
-                <SlFilterBadge trades={isDateFilterActive ? filteredTrades : data.trades} />
+                <SlFilterBadge trades={isAnyFilterActive ? filteredTrades : data.trades} />
                 {data.meta.contractType === "P" && <span style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Perpetual</span>}
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
                   {data.meta.startDate && (
@@ -1727,13 +1797,61 @@ export default function App() {
                       <EditableText value={data.meta.endDate || ""} onSave={(v) => handleMetaEdit(selectedKey, "endDate", v)} style={{ color: C.textBright, fontSize: 13 }} />
                     </span>
                   )}
-                  <span style={{ fontSize: 10, color: isDateFilterActive ? C.orange : C.muted }}>
-                    {isDateFilterActive ? `${filteredTradeCount} / ${totalTradeCount} islem` : `${totalTradeCount} islem`}
+                  <span style={{ fontSize: 10, color: isAnyFilterActive ? C.orange : C.muted }}>
+                    {isAnyFilterActive ? `${filteredTradeCount} / ${totalTradeCount} islem` : `${totalTradeCount} islem`}
                   </span>
                   <button onClick={() => downloadDatasetCSV(data)} style={{ background: "rgba(77,166,255,0.08)", border: `1px solid rgba(77,166,255,0.25)`, color: C.blue, padding: "4px 12px", borderRadius: 3, cursor: "pointer", fontSize: 10 }}>Indir CSV</button>
                   <button onClick={() => setConfirmDel(selectedKey)} style={{ background: "rgba(255,71,87,0.08)", border: `1px solid rgba(255,71,87,0.25)`, color: "#ff6b7a", padding: "4px 12px", borderRadius: 3, cursor: "pointer", fontSize: 10 }}>Sil</button>
                 </div>
               </div>
+              {hasMultiPair && (
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 8, padding: "10px 16px",
+                  borderBottom: `1px solid ${C.border}`,
+                  background: isPairFilterActive ? "rgba(0,229,160,0.06)" : "rgba(7,12,17,0.75)",
+                  flexShrink: 0, flexWrap: "wrap",
+                }}>
+                  <span style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: 1.2, marginRight: 4 }}>Parite Filtresi</span>
+                  {allTradePairs.map((pair) => {
+                    const active = selectedTradePairs.includes(pair);
+                    return (
+                      <button
+                        key={pair}
+                        onClick={() => toggleTradePair(pair)}
+                        title={`${coinSymbol(pair)} · ${tradePairCounts[pair] || 0} islem`}
+                        style={{
+                          padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontSize: 10, fontFamily: "monospace",
+                          background: active ? "rgba(0,229,160,0.12)" : "transparent",
+                          border: `1px solid ${active ? "rgba(0,229,160,0.35)" : "rgba(255,255,255,0.1)"}`,
+                          color: active ? C.green : C.muted,
+                        }}
+                      >
+                        {coinSymbol(pair)} ({tradePairCounts[pair] || 0})
+                      </button>
+                    );
+                  })}
+                  <button
+                    onClick={() => setSelectedTradePairs(allTradePairs)}
+                    style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontSize: 10, fontFamily: "monospace" }}
+                  >
+                    Tumunu Sec
+                  </button>
+                  <button
+                    onClick={() => setSelectedTradePairs([])}
+                    style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, padding: "4px 10px", borderRadius: 3, cursor: "pointer", fontSize: 10, fontFamily: "monospace" }}
+                  >
+                    Temizle
+                  </button>
+                  {isPairFilterActive && (
+                    <span style={{ fontSize: 10, color: C.green }}>
+                      {selectedTradePairs.length}/{allTradePairs.length} parite
+                    </span>
+                  )}
+                  {selectedTradePairs.length === 0 && (
+                    <span style={{ fontSize: 10, color: C.red }}>En az bir parite sec</span>
+                  )}
+                </div>
+              )}
               <div style={{ display: "flex", gap: 2, padding: "8px 12px", borderBottom: `1px solid ${C.border}`, background: "rgba(7,12,17,0.75)", flexShrink: 0, overflowX: "auto" }}>
                 {TABS.map((t) => (
                   <button key={t.id} onClick={() => setActiveTab(t.id)}
