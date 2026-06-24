@@ -404,6 +404,25 @@ function getTradeDateRange(trades) {
   };
 }
 
+function tradeEntryDateKey(t) {
+  const d = parseTradeDate(t.entryTime);
+  return d ? d.toISOString().slice(0, 10) : "";
+}
+
+function filterTradesByDateRange(trades, startDate, endDate) {
+  if (!startDate && !endDate) return trades || [];
+  let start = startDate;
+  let end = endDate;
+  if (start && end && start > end) [start, end] = [end, start];
+  return (trades || []).filter((t) => {
+    const key = tradeEntryDateKey(t);
+    if (!key) return false;
+    if (start && key < start) return false;
+    if (end && key > end) return false;
+    return true;
+  });
+}
+
 const RANK_WR_COLS = [
   { id: "all",   key: "wrAll", label: "Genel WR"  },
   { id: "long",  key: "wrL",   label: "Long WR"   },
@@ -424,6 +443,10 @@ function RankingModal({
   onMinTradesInputChange,
   exchangeFilter,
   onExchangeFilterChange,
+  dateStart,
+  dateEnd,
+  onDateStartChange,
+  onDateEndChange,
   onSelectDataset,
   onClose,
 }) {
@@ -431,11 +454,15 @@ function RankingModal({
   const minTrades = Math.max(0, parseInt(minTradesInput, 10) || 0);
   const exchangeOptions = ["ALL", ...Array.from(new Set(Object.values(datasets).map((d) => d.meta.exchange || "UNKNOWN"))).sort()];
   const selectedExchange = exchangeFilter || "ALL";
+  const dateFilterActive = Boolean(dateStart || dateEnd);
 
   const rows = Object.entries(datasets)
     .map(([key, ds]) => {
-      const rates = calcWinRates(ds.trades);
-      const slInfo = getSlFilterInfo(ds.trades);
+      const trades = dateFilterActive
+        ? filterTradesByDateRange(ds.trades, dateStart, dateEnd)
+        : ds.trades;
+      const rates = calcWinRates(trades);
+      const slInfo = getSlFilterInfo(trades);
       return {
         key,
         pair: coinSymbol(ds.meta.pair),
@@ -444,6 +471,7 @@ function RankingModal({
         startDate: ds.meta.startDate,
         endDate: ds.meta.endDate,
         slInfo,
+        filteredTrades: trades,
         ...rates,
       };
     })
@@ -477,7 +505,12 @@ function RankingModal({
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "16px 20px", borderBottom: `1px solid ${C.border}` }}>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: C.textBright, letterSpacing: 2 }}>SIRALAMA</div>
-            <div style={{ fontSize: 9, color: C.muted, marginTop: 4, letterSpacing: 1 }}>{rows.length} analiz</div>
+            <div style={{ fontSize: 9, color: C.muted, marginTop: 4, letterSpacing: 1 }}>
+              {rows.length} analiz
+              {dateFilterActive && (
+                <span style={{ color: C.orange }}> · {dateStart || "..."} — {dateEnd || "..."}</span>
+              )}
+            </div>
           </div>
           <button onClick={onClose} style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, width: 32, height: 32, borderRadius: 4, cursor: "pointer", fontSize: 16, lineHeight: 1 }}>✕</button>
         </div>
@@ -514,6 +547,38 @@ function RankingModal({
           </select>
         </div>
 
+        <div style={{
+          display: "flex", gap: 8, padding: "10px 20px", borderBottom: `1px solid ${C.border}`,
+          flexWrap: "wrap", alignItems: "center",
+          background: dateFilterActive ? "rgba(255,140,66,0.06)" : "transparent",
+        }}>
+          <span style={{ fontSize: 10, color: C.muted, letterSpacing: 0.5 }}>Tarih Filtresi</span>
+          <input
+            type="date"
+            value={dateStart}
+            max={dateEnd || undefined}
+            onChange={(e) => onDateStartChange(e.target.value)}
+            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, color: C.textBright, padding: "5px 10px", fontSize: 11, fontFamily: "monospace", outline: "none" }}
+          />
+          <span style={{ color: C.muted, fontSize: 11 }}>—</span>
+          <input
+            type="date"
+            value={dateEnd}
+            min={dateStart || undefined}
+            onChange={(e) => onDateEndChange(e.target.value)}
+            style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, color: C.textBright, padding: "5px 10px", fontSize: 11, fontFamily: "monospace", outline: "none" }}
+          />
+          <button
+            onClick={() => { onDateStartChange(""); onDateEndChange(""); }}
+            style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, padding: "5px 12px", borderRadius: 3, cursor: "pointer", fontSize: 10, fontFamily: "monospace" }}
+          >
+            Temizle
+          </button>
+          {dateFilterActive && (
+            <span style={{ fontSize: 10, color: C.orange }}>Giris tarihine gore WR</span>
+          )}
+        </div>
+
         <div style={{ flex: 1, overflowY: "auto", padding: "0 20px 20px" }}>
           {rows.length === 0 ? (
             <div style={{ padding: 40, textAlign: "center", color: C.muted, fontSize: 12 }}>
@@ -542,7 +607,7 @@ function RankingModal({
                     </td>
                     <td style={{ ...tdStyle, color: C.text }}>{r.timeframe}</td>
                     <td style={tdStyle}>
-                      <SlFilterBadge trades={datasets[r.key]?.trades || []} compact />
+                      <SlFilterBadge trades={r.filteredTrades} compact />
                     </td>
                     <td style={{ ...tdStyle, color: C.muted, fontSize: 10, whiteSpace: "nowrap" }}>
                       {r.startDate ? `${r.startDate.slice(0, 7)} › ${r.endDate?.slice(0, 7) || "—"}` : "—"}
@@ -620,7 +685,7 @@ function SecTitle({ children }) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  TAB COMPONENTS
 // ─────────────────────────────────────────────────────────────────────────────
-function OverviewTab({ data }) {
+function OverviewTab({ data, totalTradeCount, isDateFilterActive }) {
   const { trades, meta, uploadedAt } = data;
   const valid  = validTrades(trades);
   const longs  = valid.filter((t) => t.direction === "LONG");
@@ -633,11 +698,14 @@ function OverviewTab({ data }) {
   const { maxTP, maxSL } = calcStreaks(valid);
   const conflictCount = trades.filter((t) => t.result === "CONFLICT").length;
   const slInfo = getSlFilterInfo(trades);
+  const tradeSub = isDateFilterActive && totalTradeCount != null
+    ? `${conflictCount} conflict haric · ${valid.length}/${totalTradeCount} (filtreli)`
+    : `${conflictCount} conflict haric`;
 
   return (
     <div>
       <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 20 }}>
-        <StatCard label="Toplam Islem"    value={valid.length}   sub={`${conflictCount} conflict haric`} />
+        <StatCard label="Toplam Islem"    value={valid.length}   sub={tradeSub} />
         <StatCard label="Genel Win Rate"  value={`${wrAll}%`}    color={wrColor(wrAll)}  sub={`${tpAll} TP  ${slAll} SL`} />
         <StatCard label="Long Win Rate"   value={`${wrL}%`}      color={wrColor(wrL)}    sub={`${longs.length} islem`} />
         <StatCard label="Short Win Rate"  value={`${wrS}%`}      color={wrColor(wrS)}    sub={`${shorts.length} islem`} />
@@ -1135,13 +1203,37 @@ export default function App() {
   const [rankingSortBy, setRankingSortBy] = useState("all");
   const [rankingMinTradesInput, setRankingMinTradesInput] = useState("");
   const [rankingExchangeFilter, setRankingExchangeFilter] = useState("ALL");
+  const [rankingDateStart, setRankingDateStart] = useState("");
+  const [rankingDateEnd, setRankingDateEnd] = useState("");
+  const [analysisDateStart, setAnalysisDateStart] = useState("");
+  const [analysisDateEnd, setAnalysisDateEnd] = useState("");
   const fileRef = useRef();
+  const pendingAnalysisDates = useRef(null);
 
   useEffect(() => {
     dbLoadAll()
       .then((all) => { setDatasets(all); setLoading(false); })
       .catch(() => { setLoading(false); showToast("Veritabani baglantisi kurulamadi!", "err"); });
   }, []);
+
+  useEffect(() => {
+    const ds = selectedKey ? datasets[selectedKey] : null;
+    if (!ds?.trades?.length) {
+      setAnalysisDateStart("");
+      setAnalysisDateEnd("");
+      return;
+    }
+    if (pendingAnalysisDates.current) {
+      const { start, end } = pendingAnalysisDates.current;
+      pendingAnalysisDates.current = null;
+      setAnalysisDateStart(start);
+      setAnalysisDateEnd(end);
+      return;
+    }
+    const range = getTradeDateRange(ds.trades);
+    setAnalysisDateStart(range.start || ds.meta.startDate || "");
+    setAnalysisDateEnd(range.end || ds.meta.endDate || "");
+  }, [selectedKey]);
 
   const showToast = (msg, type = "ok") => {
     setToast({ msg, type });
@@ -1295,21 +1387,31 @@ export default function App() {
 
   const data = selectedKey ? datasets[selectedKey] : null;
   const tradeDateRange = data ? getTradeDateRange(data.trades) : { start: "", end: "" };
+  const filteredTrades = data
+    ? filterTradesByDateRange(data.trades, analysisDateStart, analysisDateEnd)
+    : [];
+  const filteredData = data ? { ...data, trades: filteredTrades } : null;
+  const totalTradeCount = data ? validTrades(data.trades).length : 0;
+  const filteredTradeCount = filteredData ? validTrades(filteredData.trades).length : 0;
+  const isDateFilterActive = Boolean(
+    data && tradeDateRange.start && tradeDateRange.end
+    && (analysisDateStart !== tradeDateRange.start || analysisDateEnd !== tradeDateRange.end)
+  );
   const hasTradeDateRange = Boolean(tradeDateRange.start || tradeDateRange.end);
   const hasFileDateRange = Boolean(data?.meta.startDate || data?.meta.endDate);
   const dateRangeMismatch = hasTradeDateRange && hasFileDateRange
     && (tradeDateRange.start !== (data?.meta.startDate || "") || tradeDateRange.end !== (data?.meta.endDate || ""));
 
   const tabContent = () => {
-    if (!data) return null;
+    if (!filteredData) return null;
     switch (activeTab) {
-      case "overview":     return <OverviewTab     data={data} />;
-      case "winrate":      return <WinRateTab      data={data} />;
-      case "distribution": return <DistributionTab data={data} />;
-      case "equity":       return <EquityTab       data={data} />;
-      case "streaks":      return <StreaksTab       data={data} />;
-      case "conflict":     return <ConflictTab      data={data} />;
-      case "monthly":      return <MonthlyTab       data={data} />;
+      case "overview":     return <OverviewTab     data={filteredData} totalTradeCount={totalTradeCount} isDateFilterActive={isDateFilterActive} />;
+      case "winrate":      return <WinRateTab      data={filteredData} />;
+      case "distribution": return <DistributionTab data={filteredData} />;
+      case "equity":       return <EquityTab       data={filteredData} />;
+      case "streaks":      return <StreaksTab       data={filteredData} />;
+      case "conflict":     return <ConflictTab      data={filteredData} />;
+      case "monthly":      return <MonthlyTab       data={filteredData} />;
       default:             return null;
     }
   };
@@ -1360,7 +1462,14 @@ export default function App() {
           onMinTradesInputChange={setRankingMinTradesInput}
           exchangeFilter={rankingExchangeFilter}
           onExchangeFilterChange={setRankingExchangeFilter}
+          dateStart={rankingDateStart}
+          dateEnd={rankingDateEnd}
+          onDateStartChange={setRankingDateStart}
+          onDateEndChange={setRankingDateEnd}
           onSelectDataset={(key) => {
+            if (rankingDateStart || rankingDateEnd) {
+              pendingAnalysisDates.current = { start: rankingDateStart, end: rankingDateEnd };
+            }
             setSelectedKey(key);
             setActiveTab("overview");
             setRankingOpen(false);
@@ -1608,7 +1717,7 @@ export default function App() {
                 <span style={{ color: C.blue, border: `1px solid rgba(77,166,255,0.3)`, padding: "2px 10px", borderRadius: 2, fontSize: 11, fontFamily: "monospace" }}>
                   <EditableText value={data.meta.exchange || "UNKNOWN"} onSave={(v) => handleMetaEdit(selectedKey, "exchange", v.toUpperCase())} style={{ color: C.blue, fontSize: 11 }} />
                 </span>
-                <SlFilterBadge trades={data.trades} />
+                <SlFilterBadge trades={isDateFilterActive ? filteredTrades : data.trades} />
                 {data.meta.contractType === "P" && <span style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: 1 }}>Perpetual</span>}
                 <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
                   {data.meta.startDate && (
@@ -1618,7 +1727,9 @@ export default function App() {
                       <EditableText value={data.meta.endDate || ""} onSave={(v) => handleMetaEdit(selectedKey, "endDate", v)} style={{ color: C.textBright, fontSize: 13 }} />
                     </span>
                   )}
-                  <span style={{ fontSize: 10, color: C.muted }}>{validTrades(data.trades).length} islem</span>
+                  <span style={{ fontSize: 10, color: isDateFilterActive ? C.orange : C.muted }}>
+                    {isDateFilterActive ? `${filteredTradeCount} / ${totalTradeCount} islem` : `${totalTradeCount} islem`}
+                  </span>
                   <button onClick={() => downloadDatasetCSV(data)} style={{ background: "rgba(77,166,255,0.08)", border: `1px solid rgba(77,166,255,0.25)`, color: C.blue, padding: "4px 12px", borderRadius: 3, cursor: "pointer", fontSize: 10 }}>Indir CSV</button>
                   <button onClick={() => setConfirmDel(selectedKey)} style={{ background: "rgba(255,71,87,0.08)", border: `1px solid rgba(255,71,87,0.25)`, color: "#ff6b7a", padding: "4px 12px", borderRadius: 3, cursor: "pointer", fontSize: 10 }}>Sil</button>
                 </div>
@@ -1630,6 +1741,48 @@ export default function App() {
                     {t.label}
                   </button>
                 ))}
+              </div>
+              <div style={{
+                display: "flex", alignItems: "center", gap: 10, padding: "10px 16px",
+                borderBottom: `1px solid ${C.border}`,
+                background: isDateFilterActive ? "rgba(255,140,66,0.06)" : "rgba(7,12,17,0.75)",
+                flexShrink: 0, flexWrap: "wrap",
+              }}>
+                <span style={{ fontSize: 9, color: C.muted, textTransform: "uppercase", letterSpacing: 1.2, marginRight: 4 }}>Tarih Filtresi</span>
+                <input
+                  type="date"
+                  value={analysisDateStart}
+                  min={tradeDateRange.start || undefined}
+                  max={analysisDateEnd || tradeDateRange.end || undefined}
+                  onChange={(e) => setAnalysisDateStart(e.target.value)}
+                  style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, color: C.textBright, padding: "5px 10px", fontSize: 11, fontFamily: "monospace", outline: "none" }}
+                />
+                <span style={{ color: C.muted, fontSize: 11 }}>—</span>
+                <input
+                  type="date"
+                  value={analysisDateEnd}
+                  min={analysisDateStart || tradeDateRange.start || undefined}
+                  max={tradeDateRange.end || undefined}
+                  onChange={(e) => setAnalysisDateEnd(e.target.value)}
+                  style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 3, color: C.textBright, padding: "5px 10px", fontSize: 11, fontFamily: "monospace", outline: "none" }}
+                />
+                <button
+                  onClick={() => {
+                    setAnalysisDateStart(tradeDateRange.start || "");
+                    setAnalysisDateEnd(tradeDateRange.end || "");
+                  }}
+                  style={{ background: "transparent", border: `1px solid ${C.border}`, color: C.muted, padding: "5px 12px", borderRadius: 3, cursor: "pointer", fontSize: 10, fontFamily: "monospace" }}
+                >
+                  Tum Donem
+                </button>
+                {isDateFilterActive && (
+                  <span style={{ fontSize: 10, color: C.orange, marginLeft: 4 }}>
+                    {filteredTradeCount} islem · giris tarihine gore
+                  </span>
+                )}
+                {filteredTradeCount === 0 && (analysisDateStart || analysisDateEnd) && (
+                  <span style={{ fontSize: 10, color: C.red, marginLeft: 4 }}>Bu aralikta islem yok</span>
+                )}
               </div>
               {hasTradeDateRange && (
                 <div style={{ margin: "10px 16px 0", padding: "10px 12px", border: `1px solid ${dateRangeMismatch ? "rgba(255,140,66,0.45)" : "rgba(77,166,255,0.35)"}`, borderRadius: 6, background: dateRangeMismatch ? "rgba(255,140,66,0.08)" : "rgba(77,166,255,0.08)" }}>
